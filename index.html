@@ -1,0 +1,1344 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Mimic Prototype V1</title>
+  <style>
+    :root {
+      --bg: #111111;
+      --panel: #1b1b1b;
+      --text: #f2f2f2;
+      --muted: #b8b8b8;
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      background: var(--bg);
+      color: var(--text);
+      font-family: Arial, Helvetica, sans-serif;
+    }
+
+    .wrap {
+      display: grid;
+      gap: 12px;
+      justify-items: center;
+      padding: 20px;
+    }
+
+    canvas {
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      border: 1px solid #2c2c2c;
+      background: #000;
+      max-width: min(90vw, 720px);
+      width: 100%;
+      height: auto;
+      display: block;
+    }
+
+    .hud,
+    .build-menu {
+      width: min(90vw, 720px);
+      background: var(--panel);
+      border: 1px solid #2c2c2c;
+      border-radius: 12px;
+      padding: 12px 14px;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+
+    .hud {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .title {
+      font-weight: 700;
+    }
+
+    .sub {
+      color: var(--muted);
+      font-size: 14px;
+    }
+
+    .pill {
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: #252525;
+      border: 1px solid #333;
+      font-size: 14px;
+    }
+
+    .build-menu {
+      display: none;
+      align-items: center;
+    }
+
+    .build-menu.open {
+      display: flex;
+    }
+
+    .build-label {
+      color: var(--muted);
+      font-size: 14px;
+      margin-right: 6px;
+    }
+
+    .tile-btn {
+      border: 1px solid #333;
+      background: #252525;
+      color: var(--text);
+      border-radius: 10px;
+      padding: 10px 14px;
+      cursor: pointer;
+      font: inherit;
+    }
+
+    .tile-btn:hover,
+    .tile-btn:focus-visible {
+      border-color: #6e6e6e;
+      outline: none;
+    }
+
+    .hint {
+      color: var(--muted);
+      font-size: 13px;
+      margin-left: auto;
+    }
+
+
+    .canvas-shell {
+      position: relative;
+      width: min(90vw, 720px);
+    }
+
+    .item-bar {
+      position: absolute;
+      left: 18px;
+      top: 16px;
+      display: none;
+      gap: 6px;
+      padding: 4px;
+      border: 2px solid rgba(255,255,255,0.95);
+      background: rgba(0,0,0,0.65);
+      z-index: 5;
+      pointer-events: auto;
+    }
+
+    .item-bar.open {
+      display: flex;
+    }
+
+    .item-slot {
+      width: 52px;
+      height: 52px;
+      border: 2px solid rgba(255,255,255,0.95);
+      background: rgba(0,0,0,0.85);
+      padding: 0;
+      display: grid;
+      place-items: center;
+      cursor: pointer;
+    }
+
+    .item-slot img {
+      width: 40px;
+      height: 40px;
+      object-fit: contain;
+      image-rendering: pixelated;
+      image-rendering: crisp-edges;
+      pointer-events: none;
+    }
+
+    .item-slot.empty {
+      cursor: default;
+    }
+
+    .item-slot.selected {
+      outline: 2px solid #ffd866;
+      outline-offset: -4px;
+      background: rgba(255,255,255,0.08);
+    }
+
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="canvas-shell">
+      <canvas id="game" width="480" height="360"></canvas>
+      <div class="item-bar" id="itemBar">
+        <button class="item-slot empty" data-equip="" aria-label="Empty hands"></button>
+        <button class="item-slot" data-equip="grass" aria-label="Hold grass"><img src="./tiles/tile_grass.png" alt="Grass"></button>
+        <button class="item-slot" data-equip="dirt" aria-label="Hold dirt"><img src="./tiles/tile_dirt.png" alt="Dirt"></button>
+        <button class="item-slot" data-equip="water" aria-label="Hold water"><img src="./tiles/tile_water.png" alt="Water"></button>
+        <div class="item-slot empty"></div>
+        <div class="item-slot empty"></div>
+        <div class="item-slot empty"></div>
+        <div class="item-slot empty"></div>
+        <div class="item-slot empty"></div>
+      </div>
+    </div>
+    <div class="hud">
+      <div>
+        <div class="title">Mimic Prototype</div>
+        <div class="sub">Move with arrow keys or WASD. Chest: Space to exit, E to build. Shadow: stand on the chest tile to access your item bar, choose a held tile with the mouse or 1/2/3/4 (1 = empty), and press Space facing an empty adjacent tile to place it. Stand on the chest and press Space to re-enter it.</div>
+      </div>
+      <div class="pill" id="pos">Tile: 0, 0</div>
+    </div>
+    <div class="build-menu" id="buildMenu">
+      <div class="build-label" id="buildLabel">Build target: none</div>
+      <button class="tile-btn" data-tile="grass">1 · Grass</button>
+      <button class="tile-btn" data-tile="dirt">2 · Dirt</button>
+      <button class="tile-btn" data-tile="water">3 · Water</button>
+      <div class="hint">Use arrows/WASD to choose an adjacent empty tile. Press E or Esc to close.</div>
+    </div>
+  </div>
+
+  <script>
+    const canvas = document.getElementById('game');
+    const ctx = canvas.getContext('2d');
+    ctx.imageSmoothingEnabled = false;
+
+    const posLabel = document.getElementById('pos');
+    const buildMenu = document.getElementById('buildMenu');
+    const buildLabel = document.getElementById('buildLabel');
+    const tileButtons = [...document.querySelectorAll('.build-menu#buildMenu .tile-btn')];
+    const itemBar = document.getElementById('itemBar');
+    const itemButtons = [...document.querySelectorAll('.item-bar .item-slot[data-equip]')];
+
+    const TILE_SIZE = 64;
+    const EDGE_HEIGHT = 32;
+    const PLAYER_DRAW_OFFSET_Y = 0;
+    const SHADOW_SPEED = 3.6;
+    const CHEST_SPEED = 1.8;
+
+    const world = new Map();
+    const grassVariants = new Map();
+    const treeState = new Map();
+    const tilePlacementState = new Map();
+
+    function keyOf(x, y) {
+      return `${x},${y}`;
+    }
+
+    function chooseGrassVariant() {
+      return Math.random() < 0.5 ? 'a' : 'b';
+    }
+
+    function chooseTreeVariant() {
+      return Math.random() < 0.5 ? 'a' : 'b';
+    }
+
+    function setTile(x, y, type, animate = true, now = performance.now()) {
+      const key = keyOf(x, y);
+      world.set(key, type);
+      if (type === 'grass') {
+        if (!grassVariants.has(key)) grassVariants.set(key, chooseGrassVariant());
+      } else {
+        grassVariants.delete(key);
+      }
+      if (animate) {
+        tilePlacementState.set(key, { bornAt: now });
+      } else {
+        tilePlacementState.delete(key);
+      }
+    }
+
+    function tileAt(x, y) {
+      return world.get(keyOf(x, y)) || null;
+    }
+
+    function hasTile(x, y) {
+      return world.has(keyOf(x, y));
+    }
+
+    for (let y = -1; y <= 1; y++) {
+      for (let x = -1; x <= 1; x++) {
+        setTile(x, y, 'grass', false);
+      }
+    }
+
+    const PLAYER_RADIUS = 0.22;
+    const TREE_MAX_RATIO = 0.20;
+    const TREE_GROW_MS = 320;
+    const TILE_PLACE_MS = 180;
+    const SPAWN_BLOCK_RADIUS = 0.49;
+
+    const player = {
+      x: 0.5,
+      y: 0.5,
+      form: 'chest',
+      heldTile: null,
+      facing: 'down',
+    };
+
+    const chestState = {
+      placed: false,
+      x: 0,
+      y: 0,
+    };
+
+    const camera = {
+      x: 0,
+      y: 0,
+    };
+
+    const buildState = {
+      open: false,
+      targetIndex: 0,
+    };
+
+
+    const directionOrder = [
+      { dx: 0, dy: -1, name: 'North' },
+      { dx: 1, dy: 0, name: 'East' },
+      { dx: 0, dy: 1, name: 'South' },
+      { dx: -1, dy: 0, name: 'West' },
+    ];
+
+    const input = {
+      up: false,
+      down: false,
+      left: false,
+      right: false,
+    };
+
+    const assets = {
+      grass: new Image(),
+      grassB: new Image(),
+      dirt: new Image(),
+      water: new Image(),
+      waterEdge: new Image(),
+      grassEdge: new Image(),
+      dirtEdge: new Image(),
+      tree: new Image(),
+      treeB: new Image(),
+    };
+
+    const loaded = {
+      grass: false,
+      grassB: false,
+      dirt: false,
+      water: false,
+      waterEdge: false,
+      grassEdge: false,
+      dirtEdge: false,
+      tree: false,
+      treeB: false,
+    };
+
+
+    const playerSpriteCanvas = document.createElement('canvas');
+    playerSpriteCanvas.width = TILE_SIZE;
+    playerSpriteCanvas.height = TILE_SIZE;
+    const playerSpriteCtx = playerSpriteCanvas.getContext('2d');
+    playerSpriteCtx.imageSmoothingEnabled = false;
+
+    const shadowSpriteCanvas = document.createElement('canvas');
+    shadowSpriteCanvas.width = TILE_SIZE;
+    shadowSpriteCanvas.height = TILE_SIZE;
+    const shadowSpriteCtx = shadowSpriteCanvas.getContext('2d');
+    shadowSpriteCtx.imageSmoothingEnabled = false;
+
+    function rebuildPlayerSprite() {
+      const c = playerSpriteCtx;
+      c.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
+      c.fillStyle = '#7a4a21';
+      c.fillRect(16, 20, 32, 24);
+      c.fillStyle = '#c9963b';
+      c.fillRect(16, 16, 32, 8);
+      c.fillStyle = '#f0d46b';
+      c.fillRect(29, 26, 6, 8);
+      c.strokeStyle = '#3a220e';
+      c.lineWidth = 2;
+      c.strokeRect(16, 20, 32, 24);
+      c.strokeRect(16, 16, 32, 8);
+    }
+
+    function rebuildShadowSprite() {
+      const c = shadowSpriteCtx;
+      c.clearRect(0, 0, TILE_SIZE, TILE_SIZE);
+      c.fillStyle = '#09080f';
+      c.beginPath();
+      c.ellipse(32, 24, 11, 13, 0, 0, Math.PI * 2);
+      c.fill();
+      c.beginPath();
+      c.ellipse(24, 36, 6, 10, -0.35, 0, Math.PI * 2);
+      c.fill();
+      c.beginPath();
+      c.ellipse(40, 36, 6, 10, 0.35, 0, Math.PI * 2);
+      c.fill();
+      c.beginPath();
+      c.moveTo(22, 35);
+      c.quadraticCurveTo(31, 50, 32, 54);
+      c.quadraticCurveTo(33, 50, 42, 35);
+      c.closePath();
+      c.fill();
+      c.fillStyle = '#4ef6d6';
+      c.beginPath();
+      c.ellipse(32, 27, 7, 10, 0, 0, Math.PI * 2);
+      c.fill();
+      c.fillStyle = '#d7f7ff';
+      c.fillRect(28, 17, 3, 3);
+      c.fillRect(35, 19, 2, 2);
+    }
+
+    rebuildPlayerSprite();
+    rebuildShadowSprite();
+
+    function loadAsset(name, path) {
+      assets[name].src = path;
+      assets[name].onload = () => {
+        loaded[name] = true;
+      };
+      assets[name].onerror = () => {
+        console.warn(`Could not load ${path}. Falling back for ${name}.`);
+      };
+    }
+
+    loadAsset('grass', './tiles/tile_grass.png');
+    loadAsset('grassB', './tiles/tile_grass_b.png');
+    loadAsset('dirt', './tiles/tile_dirt.png');
+    loadAsset('water', './tiles/tile_water_animated.png');
+    loadAsset('grassEdge', './tiles/edgetile_grass.png');
+    loadAsset('waterEdge', './tiles/edgetile_water_animated.png');
+    loadAsset('dirtEdge', './tiles/edgetile_dirt.png');
+    loadAsset('tree', './objects/tree.png');
+    loadAsset('treeB', './objects/tree_b.png');
+
+
+
+    const WATER_TOP_FRAMES = 4;
+    const WATER_EDGE_FRAMES = 3;
+    const WATER_ANIM_MS = 220;
+
+    function getWaterTopFrame(now) {
+      return Math.floor(now / WATER_ANIM_MS) % WATER_TOP_FRAMES;
+    }
+
+    function getWaterEdgeFrame(now) {
+      return Math.floor(now / WATER_ANIM_MS) % WATER_EDGE_FRAMES;
+    }
+
+    function drawAnimatedStripFrame(img, frameCount, frameIndex, screenX, screenY, drawW, drawH) {
+      const frameW = img.width / frameCount;
+      const sx = Math.floor(frameW * frameIndex);
+      ctx.drawImage(img, sx, 0, frameW, img.height, screenX, screenY, drawW, drawH);
+    }
+
+    function getPlayerTile() {
+      return {
+        x: Math.floor(player.x),
+        y: Math.floor(player.y),
+      };
+    }
+
+    function getPlayerPixelPosition() {
+      return {
+        x: player.x * TILE_SIZE,
+        y: player.y * TILE_SIZE,
+      };
+    }
+
+    function getCurrentSpriteCanvas() {
+      return player.form === 'shadow' ? shadowSpriteCanvas : playerSpriteCanvas;
+    }
+
+    function getChestPixelPosition() {
+      return {
+        x: chestState.x * TILE_SIZE,
+        y: chestState.y * TILE_SIZE,
+      };
+    }
+
+    function updateCamera() {
+      const playerPx = getPlayerPixelPosition();
+      camera.x = Math.floor(canvas.width / 2 - playerPx.x);
+      camera.y = Math.floor(canvas.height / 2 - playerPx.y - EDGE_HEIGHT / 2);
+    }
+
+    function getBuildTargets() {
+      const tile = getPlayerTile();
+      return directionOrder
+        .map((dir) => ({
+          ...dir,
+          x: tile.x + dir.dx,
+          y: tile.y + dir.dy,
+        }))
+        .filter((t) => !hasTile(t.x, t.y));
+    }
+
+
+    function getFacingDirection() {
+      const dir = directionOrder.find((d) => d.name.toLowerCase() === player.facing);
+      return dir || directionOrder[2];
+    }
+
+    function getHeldTileTarget() {
+      if (player.form !== 'shadow' || !player.heldTile) return null;
+      const tile = getPlayerTile();
+      const dir = getFacingDirection();
+      const tx = tile.x + dir.dx;
+      const ty = tile.y + dir.dy;
+      if (hasTile(tx, ty)) return null;
+      return { x: tx, y: ty, name: dir.name };
+    }
+
+    function placeHeldTile() {
+      const target = getHeldTileTarget();
+      if (!target) return false;
+      setTile(target.x, target.y, player.heldTile, true, performance.now());
+      render();
+      return true;
+    }
+
+    function syncBuildUi() {
+      buildMenu.classList.toggle('open', buildState.open && player.form === 'chest');
+
+      if (!buildState.open || player.form !== 'chest') return;
+
+      const targets = getBuildTargets();
+      if (!targets.length) {
+        buildLabel.textContent = 'Build target: no adjacent empty tiles';
+        return;
+      }
+
+      if (buildState.targetIndex >= targets.length) {
+        buildState.targetIndex = 0;
+      }
+
+      const target = targets[buildState.targetIndex];
+      buildLabel.textContent = `Build target: ${target.name} (${target.x}, ${target.y})`;
+    }
+
+    function getSelectedBuildTarget() {
+      const targets = getBuildTargets();
+      if (!targets.length) return null;
+      if (buildState.targetIndex >= targets.length) buildState.targetIndex = 0;
+      return targets[buildState.targetIndex];
+    }
+
+    function isOnChestTile() {
+      if (player.form !== 'shadow' || !chestState.placed) return false;
+      const playerTile = getPlayerTile();
+      return playerTile.x === Math.floor(chestState.x) && playerTile.y === Math.floor(chestState.y);
+    }
+
+    function isItemBarOpen() {
+      return player.form === 'shadow' && isOnChestTile();
+    }
+
+    function syncItemBarUi() {
+      const open = isItemBarOpen();
+      itemBar.classList.toggle('open', open);
+      itemButtons.forEach((btn) => {
+        const equip = btn.dataset.equip || null;
+        btn.classList.toggle('selected', equip === (player.heldTile || null));
+      });
+    }
+
+    function getTilePlacementProgress(tileKey, now) {
+      const state = tilePlacementState.get(tileKey);
+      if (!state) return 1;
+      const progress = Math.max(0, Math.min(1, (now - state.bornAt) / TILE_PLACE_MS));
+      if (progress >= 1) tilePlacementState.delete(tileKey);
+      return progress;
+    }
+
+    function getTilePlacementAnimState(progress) {
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const pop = Math.sin(progress * Math.PI) * 0.06;
+      const scale = 0.9 + eased * 0.1 + pop;
+      return {
+        alpha: 0.55 + eased * 0.45,
+        scaleX: scale,
+        scaleY: scale,
+        yOffset: Math.round((1 - eased) * 10),
+      };
+    }
+
+    function drawPlacedTopLayer(drawFn, screenX, screenY, progress) {
+      if (progress >= 1) {
+        drawFn(screenX, screenY, TILE_SIZE, TILE_SIZE);
+        return;
+      }
+      const anim = getTilePlacementAnimState(progress);
+      const drawW = Math.round(TILE_SIZE * anim.scaleX);
+      const drawH = Math.round(TILE_SIZE * anim.scaleY);
+      const drawX = screenX + Math.round((TILE_SIZE - drawW) / 2);
+      const drawY = screenY + TILE_SIZE - drawH + anim.yOffset;
+      ctx.save();
+      ctx.globalAlpha = anim.alpha;
+      drawFn(drawX, drawY, drawW, drawH);
+      ctx.restore();
+    }
+
+    function drawPlacedEdgeLayer(drawFn, screenX, screenY, progress) {
+      const edgeY = screenY + TILE_SIZE;
+      if (progress >= 1) {
+        drawFn(screenX, edgeY, TILE_SIZE, EDGE_HEIGHT);
+        return;
+      }
+      const anim = getTilePlacementAnimState(progress);
+      const fullH = TILE_SIZE + EDGE_HEIGHT;
+      const drawW = Math.round(TILE_SIZE * anim.scaleX);
+      const drawH = Math.round(EDGE_HEIGHT * anim.scaleY);
+      const fullScaledH = Math.round(fullH * anim.scaleY);
+      const drawX = screenX + Math.round((TILE_SIZE - drawW) / 2);
+      const fullTop = screenY + fullH - fullScaledH + anim.yOffset;
+      const drawY = fullTop + Math.round(TILE_SIZE * anim.scaleY);
+      ctx.save();
+      ctx.globalAlpha = anim.alpha;
+      drawFn(drawX, drawY, drawW, drawH);
+      ctx.restore();
+    }
+
+    function drawTileTop(type, tileX, tileY, screenX, screenY, now, progress = 1) {
+      if (type === 'grass') {
+        const grassVariant = grassVariants.get(keyOf(tileX, tileY)) || 'a';
+        const grassImage = grassVariant === 'b' && loaded.grassB ? assets.grassB : assets.grass;
+        return drawPlacedTopLayer((dx, dy, dw, dh) => {
+          if ((grassVariant === 'b' && loaded.grassB) || loaded.grass) {
+            ctx.drawImage(grassImage, dx, dy, dw, dh);
+            return;
+          }
+          ctx.fillStyle = '#7edc7d';
+          ctx.fillRect(dx, dy, dw, dh);
+        }, screenX, screenY, progress);
+      }
+
+      if (type === 'water') {
+        return drawPlacedTopLayer((dx, dy, dw, dh) => {
+          if (loaded.water) {
+            drawAnimatedStripFrame(assets.water, WATER_TOP_FRAMES, getWaterTopFrame(now), dx, dy, dw, dh);
+            return;
+          }
+          ctx.fillStyle = '#6cd9e6';
+          ctx.fillRect(dx, dy, dw, dh);
+          ctx.fillStyle = 'rgba(255,255,255,0.25)';
+          ctx.fillRect(dx + Math.round(dw * 0.125), dy + Math.round(dh * 0.16), Math.round(dw * 0.34), Math.max(2, Math.round(dh * 0.08)));
+        }, screenX, screenY, progress);
+      }
+
+      if (type === 'dirt') {
+        return drawPlacedTopLayer((dx, dy, dw, dh) => {
+          if (loaded.dirt) {
+            ctx.drawImage(assets.dirt, dx, dy, dw, dh);
+            return;
+          }
+          ctx.fillStyle = '#8b5a3c';
+          ctx.fillRect(dx, dy, dw, dh);
+          ctx.fillStyle = '#6b422d';
+          for (let i = 0; i < 5; i++) {
+            ctx.fillRect(dx + Math.round(dw * 0.1) + i * Math.round(dw * 0.17), dy + Math.round(dh * (0.28 + (i % 2) * 0.18)), Math.max(2, Math.round(dw * 0.06)), Math.max(2, Math.round(dh * 0.06)));
+          }
+        }, screenX, screenY, progress);
+      }
+    }
+
+    function drawTileEdge(type, screenX, screenY, now, progress = 1) {
+      if (type === 'grass') {
+        return drawPlacedEdgeLayer((dx, dy, dw, dh) => {
+          if (loaded.grassEdge) {
+            ctx.drawImage(assets.grassEdge, dx, dy, dw, dh);
+            return;
+          }
+          ctx.fillStyle = '#8b5a3c';
+          ctx.fillRect(dx, dy, dw, dh);
+        }, screenX, screenY, progress);
+      }
+
+      if (type === 'water') {
+        return drawPlacedEdgeLayer((dx, dy, dw, dh) => {
+          if (loaded.waterEdge) {
+            drawAnimatedStripFrame(assets.waterEdge, WATER_EDGE_FRAMES, getWaterEdgeFrame(now), dx, dy, dw, dh);
+            return;
+          }
+          ctx.fillStyle = '#4caab4';
+          ctx.fillRect(dx, dy, dw, dh);
+        }, screenX, screenY, progress);
+      }
+
+      if (type === 'dirt') {
+        return drawPlacedEdgeLayer((dx, dy, dw, dh) => {
+          if (loaded.dirtEdge) {
+            ctx.drawImage(assets.dirtEdge, dx, dy, dw, dh);
+            return;
+          }
+          ctx.fillStyle = '#6b422d';
+          ctx.fillRect(dx, dy, dw, dh);
+        }, screenX, screenY, progress);
+      }
+    }
+
+    function hasWaterWithin2(x, y) {
+      for (let dy = -2; dy <= 2; dy++) {
+        for (let dx = -2; dx <= 2; dx++) {
+          if (tileAt(x + dx, y + dy) === 'water') return true;
+        }
+      }
+      return false;
+    }
+
+    function grassTileCount() {
+      let count = 0;
+      for (const type of world.values()) {
+        if (type === 'grass') count++;
+      }
+      return count;
+    }
+
+    function canTreeSpawnAt(x, y) {
+      if (tileAt(x, y) !== 'grass') return false;
+      if (tileAt(x, y - 1) !== 'grass') return false;
+      if (tileAt(x + 1, y) !== 'grass') return false;
+      if (tileAt(x, y + 1) !== 'grass') return false;
+      if (tileAt(x - 1, y) !== 'grass') return false;
+      if (!hasWaterWithin2(x, y)) return false;
+      return true;
+    }
+
+    function treeScore(x, y) {
+      const n = Math.sin(x * 127.1 + y * 311.7) * 43758.5453123;
+      return n - Math.floor(n);
+    }
+
+    function getEntityOccupiedTiles(cx, cy, radius = PLAYER_RADIUS) {
+      const minX = Math.floor(cx - radius);
+      const maxX = Math.floor(cx + radius);
+      const minY = Math.floor(cy - radius);
+      const maxY = Math.floor(cy + radius);
+      const occupied = new Set();
+
+      for (let y = minY; y <= maxY; y++) {
+        for (let x = minX; x <= maxX; x++) {
+          occupied.add(keyOf(x, y));
+        }
+      }
+
+      return occupied;
+    }
+
+    function getBlockedSpawnTiles() {
+      const occupied = new Set();
+
+      // Block tree bases from any tile touched by the player or the placed chest.
+      // Canopies are still allowed to visually overlap them, but bases cannot spawn
+      // under any part of their footprint.
+      for (const key of getEntityOccupiedTiles(player.x, player.y, SPAWN_BLOCK_RADIUS)) {
+        occupied.add(key);
+      }
+
+      if (chestState.placed) {
+        for (const key of getEntityOccupiedTiles(chestState.x, chestState.y, SPAWN_BLOCK_RADIUS)) {
+          occupied.add(key);
+        }
+      }
+
+      return occupied;
+    }
+
+    function computeDesiredTreeTiles() {
+      const grassCount = grassTileCount();
+      if (grassCount < 10) return new Set();
+
+      const maxTrees = Math.floor(grassCount * TREE_MAX_RATIO);
+      if (maxTrees <= 0) return new Set();
+
+      const occupiedTiles = getBlockedSpawnTiles();
+      const chosen = new Set();
+      const candidates = [];
+
+      // Preserve any existing trees that are still valid. Occupancy blocking only applies
+      // to spawning new tree bases, not to already-established trees.
+      for (const key of treeState.keys()) {
+        const [x, y] = key.split(',').map(Number);
+        if (!canTreeSpawnAt(x, y)) continue;
+        chosen.add(key);
+      }
+
+      for (const [key, type] of world.entries()) {
+        if (type !== 'grass') continue;
+        if (chosen.has(key)) continue;
+        if (occupiedTiles.has(key)) continue;
+        const [x, y] = key.split(',').map(Number);
+        if (!canTreeSpawnAt(x, y)) continue;
+        candidates.push({ x, y, score: treeScore(x, y) });
+      }
+
+      candidates.sort((a, b) => a.score - b.score || a.y - b.y || a.x - b.x);
+      for (const candidate of candidates) {
+        if (chosen.size >= maxTrees) break;
+        chosen.add(keyOf(candidate.x, candidate.y));
+      }
+
+      return chosen;
+    }
+
+
+    function reconcileTreeState(treeTiles, now) {
+      for (const key of [...treeState.keys()]) {
+        if (!treeTiles.has(key)) {
+          treeState.delete(key);
+        }
+      }
+
+      for (const key of treeTiles) {
+        if (!treeState.has(key)) {
+          treeState.set(key, { bornAt: now, variant: chooseTreeVariant() });
+        }
+      }
+    }
+
+    function getTreeAnimationProgress(tileKey, now) {
+      const state = treeState.get(tileKey);
+      if (!state) return 1;
+      return Math.max(0, Math.min(1, (now - state.bornAt) / TREE_GROW_MS));
+    }
+
+    function getTreeAnimState(progress) {
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const pop = Math.sin(progress * Math.PI) * 0.10;
+      const scale = 0.82 + eased * 0.18 + pop;
+      return {
+        alpha: 0.45 + eased * 0.55,
+        scaleX: scale,
+        scaleY: scale,
+        yOffset: Math.round((1 - eased) * 18),
+      };
+    }
+
+    function drawTreeLayerAtTile(tileX, tileY, progress, layer) {
+      const baseScreenX = camera.x + tileX * TILE_SIZE;
+      const baseScreenY = camera.y + tileY * TILE_SIZE;
+      const anim = getTreeAnimState(progress);
+      const treeInfo = treeState.get(keyOf(tileX, tileY));
+      const treeVariant = treeInfo?.variant === 'b' ? 'treeB' : 'tree';
+      const treeAsset = loaded[treeVariant] ? assets[treeVariant] : assets.tree;
+      const treeLoaded = loaded[treeVariant] || loaded.tree;
+
+      ctx.save();
+      ctx.globalAlpha = anim.alpha;
+
+      if (treeLoaded) {
+        const destW = Math.round(TILE_SIZE * anim.scaleX);
+        const destH = Math.round((treeAsset.height / treeAsset.width) * destW * anim.scaleY);
+        const destX = baseScreenX + Math.round((TILE_SIZE - destW) / 2);
+        const destY = baseScreenY + TILE_SIZE - destH + anim.yOffset;
+
+        ctx.beginPath();
+        if (layer === 'bottom') {
+          ctx.rect(baseScreenX, baseScreenY, TILE_SIZE, TILE_SIZE + EDGE_HEIGHT + 8);
+        } else {
+          ctx.rect(baseScreenX, baseScreenY - destH - 8, TILE_SIZE, destH + 8);
+        }
+        ctx.clip();
+
+        ctx.drawImage(treeAsset, destX, destY, destW, destH);
+        ctx.restore();
+        return;
+      }
+
+      if (layer === 'bottom') {
+        const trunkW = Math.max(1, Math.round(16 * anim.scaleX));
+        const trunkH = Math.max(1, Math.round(28 * anim.scaleY));
+        const trunkX = baseScreenX + Math.round((TILE_SIZE - trunkW) / 2);
+        ctx.fillStyle = '#5a3d21';
+        ctx.fillRect(trunkX, baseScreenY + 40 - trunkH + anim.yOffset, trunkW, trunkH);
+      } else {
+        ctx.fillStyle = '#62b55f';
+        ctx.beginPath();
+        ctx.arc(baseScreenX + 32, baseScreenY + 8 + anim.yOffset, Math.max(1, 24 * anim.scaleX), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawTreeBottomAtTile(tileX, tileY, progress) {
+      drawTreeLayerAtTile(tileX, tileY, progress, 'bottom');
+    }
+
+    function drawTreeTopAtTile(tileX, tileY, progress) {
+      drawTreeLayerAtTile(tileX, tileY, progress, 'top');
+    }
+
+    function drawChestAtWorld(cx, cy) {
+      const screenX = camera.x + cx * TILE_SIZE - TILE_SIZE / 2;
+      const screenY = camera.y + cy * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y;
+      ctx.drawImage(playerSpriteCanvas, screenX, screenY, TILE_SIZE, TILE_SIZE);
+    }
+
+    function drawHeldTileBubble(now) {
+      if (player.form !== 'shadow' || !player.heldTile) return;
+      const playerPx = getPlayerPixelPosition();
+      const screenX = Math.floor(camera.x + playerPx.x - TILE_SIZE / 2);
+      const screenY = Math.floor(camera.y + playerPx.y - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y);
+      const bubbleW = 26;
+      const bubbleH = 24;
+      const bubbleX = screenX + 19;
+      const bob = Math.sin(now / 280) * 1.5;
+      const bubbleY = screenY - 10 + bob;
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fillRect(bubbleX, bubbleY, bubbleW, bubbleH);
+      ctx.strokeStyle = 'rgba(40,40,40,0.9)';
+      ctx.lineWidth = 2;
+      ctx.strokeRect(bubbleX + 0.5, bubbleY + 0.5, bubbleW - 1, bubbleH - 1);
+      ctx.beginPath();
+      ctx.moveTo(bubbleX + 10, bubbleY + bubbleH);
+      ctx.lineTo(bubbleX + 14, bubbleY + bubbleH + 5);
+      ctx.lineTo(bubbleX + 18, bubbleY + bubbleH);
+      ctx.closePath();
+      ctx.fillStyle = 'rgba(255,255,255,0.92)';
+      ctx.fill();
+      ctx.stroke();
+
+      const iconX = bubbleX + 5;
+      const iconY = bubbleY + 4;
+      const iconSize = 16;
+      if (player.heldTile === 'grass') {
+        const playerTile = getPlayerTile();
+        const grassVariant = grassVariants.get(keyOf(playerTile.x, playerTile.y)) || 'a';
+        const grassImage = grassVariant === 'b' && loaded.grassB ? assets.grassB : assets.grass;
+        if ((grassVariant === 'b' && loaded.grassB) || loaded.grass) {
+          ctx.drawImage(grassImage, iconX, iconY, iconSize, iconSize);
+          return;
+        }
+      }
+      if (player.heldTile === 'dirt') {
+        if (loaded.dirt) {
+          ctx.drawImage(assets.dirt, iconX, iconY, iconSize, iconSize);
+          return;
+        }
+      }
+      if (player.heldTile === 'water') {
+        if (loaded.water) {
+          drawAnimatedStripFrame(assets.water, WATER_TOP_FRAMES, getWaterTopFrame(now), iconX, iconY, iconSize, iconSize);
+          return;
+        }
+      }
+      const fallbackColors = { grass: '#7edc7d', dirt: '#8b5a3c', water: '#6cd9e6' };
+      ctx.fillStyle = fallbackColors[player.heldTile] || '#ccc';
+      ctx.fillRect(iconX, iconY, iconSize, iconSize);
+    }
+
+    function drawPlayer(now) {
+      if (player.form === 'chest') {
+        drawChestAtWorld(player.x, player.y);
+        return;
+      }
+      const playerPx = getPlayerPixelPosition();
+      const screenX = Math.floor(camera.x + playerPx.x - TILE_SIZE / 2);
+      const screenY = Math.floor(camera.y + playerPx.y - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y);
+      const drawScale = 0.78;
+      const drawW = Math.floor(TILE_SIZE * drawScale);
+      const drawH = Math.floor(TILE_SIZE * drawScale);
+      const drawX = screenX + Math.floor((TILE_SIZE - drawW) / 2);
+      const drawY = screenY + 10 + Math.floor((TILE_SIZE - drawH) / 2);
+      ctx.drawImage(shadowSpriteCanvas, drawX, drawY, drawW, drawH);
+      drawHeldTileBubble(now);
+    }
+
+    function drawChestObject() {
+      if (!chestState.placed) return;
+      drawChestAtWorld(chestState.x, chestState.y);
+    }
+
+    function drawReflectionSprite(spriteCanvas, worldX, worldY, bounds, now, alphaBase) {
+      const screenX = camera.x + worldX * TILE_SIZE - TILE_SIZE / 2;
+      const screenY = camera.y + worldY * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y;
+      const reflectionTop = screenY + 48;
+      const reflectionHeight = Math.floor(TILE_SIZE * 0.82);
+      const sliceCount = 8;
+      const sourceSliceH = Math.floor(TILE_SIZE / sliceCount);
+      const destSliceH = reflectionHeight / sliceCount;
+
+      let hasVisibleWater = false;
+      ctx.save();
+      ctx.beginPath();
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          if (tileAt(x, y) !== 'water') continue;
+          const tileScreenX = camera.x + x * TILE_SIZE;
+          const tileScreenY = camera.y + y * TILE_SIZE;
+          ctx.rect(tileScreenX, tileScreenY, TILE_SIZE, TILE_SIZE);
+          hasVisibleWater = true;
+        }
+      }
+
+      if (!hasVisibleWater) {
+        ctx.restore();
+        return;
+      }
+
+      ctx.clip();
+      for (let i = 0; i < sliceCount; i++) {
+        const sway = Math.round(Math.sin(now / 180 + i * 1.35) * 2);
+        const srcY = TILE_SIZE - (i + 1) * sourceSliceH;
+        const destY = reflectionTop + i * destSliceH;
+        const fade = alphaBase * (1 - i / (sliceCount * 1.05));
+        ctx.globalAlpha = fade;
+        ctx.drawImage(
+          spriteCanvas,
+          0,
+          srcY,
+          TILE_SIZE,
+          sourceSliceH,
+          screenX + sway,
+          destY,
+          TILE_SIZE,
+          destSliceH
+        );
+      }
+
+      ctx.restore();
+    }
+
+    function drawPlayerReflection(bounds, now) {
+      if (player.form === 'shadow') {
+        drawReflectionSprite(playerSpriteCanvas, chestState.x, chestState.y, bounds, now, 0.34);
+        drawReflectionSprite(shadowSpriteCanvas, player.x, player.y, bounds, now, 0.28);
+        return;
+      }
+      drawReflectionSprite(playerSpriteCanvas, player.x, player.y, bounds, now, 0.34);
+    }
+
+
+    function drawHeldTileTargetHighlight() {
+      const target = getHeldTileTarget();
+      if (!target) return;
+      const screenX = camera.x + target.x * TILE_SIZE;
+      const screenY = camera.y + target.y * TILE_SIZE;
+      ctx.strokeStyle = 'rgba(156, 230, 255, 0.95)';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(screenX + 8, screenY + 8, TILE_SIZE - 16, TILE_SIZE - 16);
+      ctx.fillStyle = 'rgba(156, 230, 255, 0.14)';
+      ctx.fillRect(screenX + 8, screenY + 8, TILE_SIZE - 16, TILE_SIZE - 16);
+    }
+
+    function drawBuildHighlight() {
+      if (!buildState.open) return;
+      const target = getSelectedBuildTarget();
+      if (!target) return;
+
+      const screenX = camera.x + target.x * TILE_SIZE;
+      const screenY = camera.y + target.y * TILE_SIZE;
+
+      ctx.strokeStyle = '#ffd866';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
+      ctx.fillStyle = 'rgba(255, 216, 102, 0.16)';
+      ctx.fillRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
+    }
+
+    function getVisibleBounds() {
+      const minX = Math.floor((-camera.x) / TILE_SIZE) - 1;
+      const maxX = Math.ceil((canvas.width - camera.x) / TILE_SIZE) + 1;
+      const minY = Math.floor((-camera.y) / TILE_SIZE) - 1;
+      const maxY = Math.ceil((canvas.height - camera.y) / TILE_SIZE) + 1;
+      return { minX, maxX, minY, maxY };
+    }
+
+    function render(now = performance.now()) {
+      updateCamera();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      const bounds = getVisibleBounds();
+      const treeTiles = computeDesiredTreeTiles();
+      reconcileTreeState(treeTiles, now);
+
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          const tile = tileAt(x, y);
+          if (!tile) continue;
+          const screenX = camera.x + x * TILE_SIZE;
+          const screenY = camera.y + y * TILE_SIZE;
+          drawTileTop(tile, x, y, screenX, screenY, now, getTilePlacementProgress(keyOf(x, y), now));
+        }
+      }
+
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          const tileKey = keyOf(x, y);
+          if (!treeTiles.has(tileKey)) continue;
+          drawTreeBottomAtTile(x, y, getTreeAnimationProgress(tileKey, now));
+        }
+      }
+
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          const tile = tileAt(x, y);
+          if (!tile) continue;
+          if (hasTile(x, y + 1)) continue;
+          const screenX = camera.x + x * TILE_SIZE;
+          const screenY = camera.y + y * TILE_SIZE;
+          drawTileEdge(tile, screenX, screenY, now, getTilePlacementProgress(keyOf(x, y), now));
+        }
+      }
+
+      drawBuildHighlight();
+      drawHeldTileTargetHighlight();
+
+      drawPlayerReflection(bounds, now);
+      drawChestObject();
+      drawPlayer(now);
+
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          const tileKey = keyOf(x, y);
+          if (!treeTiles.has(tileKey)) continue;
+          drawTreeTopAtTile(x, y, getTreeAnimationProgress(tileKey, now));
+        }
+      }
+
+      const playerTile = getPlayerTile();
+      const handText = player.form === 'shadow' && player.heldTile ? ` · Holding: ${player.heldTile}` : '';
+      posLabel.textContent = `Form: ${player.form} · Tile: ${playerTile.x}, ${playerTile.y}${handText}`;
+      syncBuildUi();
+      syncItemBarUi();
+    }
+
+    function isWalkablePoint(tileSpaceX, tileSpaceY) {
+      const tx = Math.floor(tileSpaceX);
+      const ty = Math.floor(tileSpaceY);
+      const tile = tileAt(tx, ty);
+      if (!tile) return false;
+      if (tile === 'water') return false;
+      if (computeDesiredTreeTiles().has(keyOf(tx, ty))) return false;
+      return true;
+    }
+
+    function isWalkableBody(centerX, centerY) {
+      const samplePoints = [
+        [centerX - PLAYER_RADIUS, centerY - PLAYER_RADIUS],
+        [centerX + PLAYER_RADIUS, centerY - PLAYER_RADIUS],
+        [centerX - PLAYER_RADIUS, centerY + PLAYER_RADIUS],
+        [centerX + PLAYER_RADIUS, centerY + PLAYER_RADIUS],
+        [centerX, centerY - PLAYER_RADIUS],
+        [centerX, centerY + PLAYER_RADIUS],
+        [centerX - PLAYER_RADIUS, centerY],
+        [centerX + PLAYER_RADIUS, centerY],
+      ];
+
+      return samplePoints.every(([x, y]) => isWalkablePoint(x, y));
+    }
+
+    function updatePlayer(dt) {
+      if (buildState.open) return;
+
+      let moveX = 0;
+      let moveY = 0;
+
+      if (input.left) moveX -= 1;
+      if (input.right) moveX += 1;
+      if (input.up) moveY -= 1;
+      if (input.down) moveY += 1;
+
+      if (moveX === 0 && moveY === 0) return;
+
+      const rawMoveX = moveX;
+      const rawMoveY = moveY;
+      if (Math.abs(rawMoveX) >= Math.abs(rawMoveY)) {
+        if (rawMoveX < 0) player.facing = 'west';
+        else if (rawMoveX > 0) player.facing = 'east';
+      } else {
+        if (rawMoveY < 0) player.facing = 'north';
+        else if (rawMoveY > 0) player.facing = 'south';
+      }
+
+      const length = Math.hypot(moveX, moveY);
+      moveX /= length;
+      moveY /= length;
+
+      const speed = player.form === 'chest' ? CHEST_SPEED : SHADOW_SPEED;
+      const step = speed * dt;
+      const nextX = player.x + moveX * step;
+      const nextY = player.y + moveY * step;
+
+      if (isWalkableBody(nextX, player.y)) {
+        player.x = nextX;
+      }
+      if (isWalkableBody(player.x, nextY)) {
+        player.y = nextY;
+      }
+    }
+
+    function getReentryTile() {
+      if (!chestState.placed) return null;
+      const playerTile = getPlayerTile();
+      const chestTileX = Math.floor(chestState.x);
+      const chestTileY = Math.floor(chestState.y);
+      if (playerTile.x === chestTileX && playerTile.y === chestTileY) {
+        return { x: chestState.x, y: chestState.y };
+      }
+      return null;
+    }
+
+    function mountChest() {
+      const reentry = getReentryTile();
+      if (!reentry) return;
+      player.form = 'chest';
+      player.x = reentry.x;
+      player.y = reentry.y;
+      chestState.placed = false;
+      syncItemBarUi();
+      render();
+    }
+
+    function setHeldTile(type) {
+      player.heldTile = type || null;
+      render();
+    }
+
+    function toggleShadowForm() {
+      if (buildState.open) buildState.open = false;
+
+      if (player.form === 'chest') {
+        chestState.placed = true;
+        chestState.x = player.x;
+        chestState.y = player.y;
+        player.form = 'shadow';
+        player.heldTile = null;
+        syncItemBarUi();
+        render();
+        return;
+      }
+
+      if (isOnChestTile()) {
+        mountChest();
+      }
+    }
+
+    function toggleBuildMenu() {
+      if (player.form !== 'chest') return;
+      buildState.open = !buildState.open;
+      buildState.targetIndex = 0;
+      render();
+    }
+
+    function cycleBuildTarget(step) {
+      const targets = getBuildTargets();
+      if (!targets.length) return;
+      buildState.targetIndex = (buildState.targetIndex + step + targets.length) % targets.length;
+      render();
+    }
+
+    function placeTile(type) {
+      const target = getSelectedBuildTarget();
+      if (!target) return;
+      setTile(target.x, target.y, type, true, performance.now());
+      buildState.open = false;
+      buildState.targetIndex = 0;
+      render();
+    }
+
+    tileButtons.forEach((btn) => {
+      btn.addEventListener('click', () => placeTile(btn.dataset.tile));
+    });
+
+    itemButtons.forEach((btn) => {
+      btn.addEventListener('click', () => {
+        if (!isItemBarOpen()) return;
+        setHeldTile(btn.dataset.equip || null);
+      });
+    });
+
+    function setMovementKey(key, isDown) {
+      if (key === 'arrowup' || key === 'w') input.up = isDown;
+      if (key === 'arrowdown' || key === 's') input.down = isDown;
+      if (key === 'arrowleft' || key === 'a') input.left = isDown;
+      if (key === 'arrowright' || key === 'd') input.right = isDown;
+    }
+
+    window.addEventListener('keydown', (e) => {
+      const key = e.key.toLowerCase();
+      const movementKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'];
+      const uiKeys = ['e', 'escape', '1', '2', '3', '4', ' '];
+
+      if ([...movementKeys, ...uiKeys].includes(key)) {
+        e.preventDefault();
+      }
+
+      if (key === ' ' && !e.repeat) {
+        if (player.form === 'shadow') {
+          if (isOnChestTile()) {
+            mountChest();
+            return;
+          }
+          if (!buildState.open && player.heldTile && placeHeldTile()) {
+            return;
+          }
+        }
+        toggleShadowForm();
+        return;
+      }
+
+      if (key === 'e' && !e.repeat) {
+        toggleBuildMenu();
+        return;
+      }
+
+      if (key === 'escape') {
+        if (buildState.open) {
+          buildState.open = false;
+          render();
+          return;
+        }
+      }
+
+      if (isItemBarOpen()) {
+        if (key === '1' && !e.repeat) return setHeldTile(null);
+        if (key === '2' && !e.repeat) return setHeldTile('grass');
+        if (key === '3' && !e.repeat) return setHeldTile('dirt');
+        if (key === '4' && !e.repeat) return setHeldTile('water');
+      }
+
+      if (buildState.open) {
+        if ((key === 'arrowup' || key === 'w' || key === 'arrowleft' || key === 'a') && !e.repeat) {
+          cycleBuildTarget(-1);
+          return;
+        }
+        if ((key === 'arrowdown' || key === 's' || key === 'arrowright' || key === 'd') && !e.repeat) {
+          cycleBuildTarget(1);
+          return;
+        }
+        if (key === '1' && !e.repeat) return placeTile('grass');
+        if (key === '2' && !e.repeat) return placeTile('dirt');
+        if (key === '3' && !e.repeat) return placeTile('water');
+        return;
+      }
+
+      setMovementKey(key, true);
+    });
+
+    window.addEventListener('keyup', (e) => {
+      setMovementKey(e.key.toLowerCase(), false);
+    });
+
+    window.addEventListener('blur', () => {
+      input.up = false;
+      input.down = false;
+      input.left = false;
+      input.right = false;
+    });
+
+    let lastTime = performance.now();
+
+    function frame(now) {
+      const dt = Math.min((now - lastTime) / 1000, 0.05);
+      lastTime = now;
+      updatePlayer(dt);
+      render();
+      requestAnimationFrame(frame);
+    }
+
+    render();
+    requestAnimationFrame(frame);
+  </script>
+</body>
+</html>
