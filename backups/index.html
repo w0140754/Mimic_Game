@@ -113,24 +113,24 @@
       margin-left: auto;
     }
 
+
     .canvas-shell {
       position: relative;
       width: min(90vw, 720px);
     }
 
-	.item-bar {
-	  position: absolute;
-	  left: 50%;
-	  top: 16px;
-	  transform: translateX(-50%);
-	  display: none;
-	  gap: 6px;
-	  padding: 4px;
-	  border: 2px solid rgba(255,255,255,0.95);
-	  background: rgba(0,0,0,0.65);
-	  z-index: 5;
-	  pointer-events: auto;
-	}
+    .item-bar {
+      position: absolute;
+      left: 18px;
+      top: 16px;
+      display: none;
+      gap: 6px;
+      padding: 4px;
+      border: 2px solid rgba(255,255,255,0.95);
+      background: rgba(0,0,0,0.65);
+      z-index: 5;
+      pointer-events: auto;
+    }
 
     .item-bar.open {
       display: flex;
@@ -165,6 +165,7 @@
       outline-offset: -4px;
       background: rgba(255,255,255,0.08);
     }
+
   </style>
 </head>
 <body>
@@ -185,8 +186,8 @@
     </div>
     <div class="hud">
       <div>
-        <div class="title">Mimic Simulator</div>
-        <div class="sub"></div>
+        <div class="title">Mimic Prototype</div>
+        <div class="sub">Move with arrow keys or WASD. Chest: Space to exit, E to build. Shadow: stand on the chest tile to access your item bar, choose a held tile with the mouse or 1/2/3/4 (1 = empty), and press Space facing an empty adjacent tile to place it. Stand on the chest and press Space to re-enter it.</div>
       </div>
       <div class="pill" id="pos">Tile: 0, 0</div>
     </div>
@@ -220,7 +221,6 @@
     const world = new Map();
     const grassVariants = new Map();
     const treeState = new Map();
-    const choppedTrees = new Map();
     const tilePlacementState = new Map();
 
     function keyOf(x, y) {
@@ -267,33 +267,21 @@
     const PLAYER_RADIUS = 0.22;
     const TREE_MAX_RATIO = 0.20;
     const TREE_GROW_MS = 320;
-    const TREE_REGROW_MS = 60000;
     const TILE_PLACE_MS = 180;
     const SPAWN_BLOCK_RADIUS = 0.49;
-    const SHADOW_WALK_FRAMES = 6;
-    const SHADOW_WALK_FRAME_MS = 90;
+	const SHADOW_WALK_FRAMES = 6;
+	const SHADOW_WALK_FRAME_MS = 90;
 
-    const GREEN_SLIME_FRAMES = 3;
-    const GREEN_SLIME_FRAME_MS = 180;
-    const GREEN_SLIME_IDLE_FRAME = 0;
-    const GREEN_SLIME_SPEED = 0.8;
-    const GREEN_SLIME_WANDER_RADIUS = 6;
-    const GREEN_SLIME_INTERACT_RANGE = 0.7;
-    const CHEST_INTERACT_RANGE = 0.5;
-    const GREEN_SLIME_ALERT_MS = 1400;
-    const FOREST_SLIME_SPAWN_CHECK_MS = 3000;
-    const FOREST_SLIME_SPAWN_CHANCE = 0.05;
-
-    const player = {
-      x: 0.5,
-      y: 0.5,
-      form: 'chest',
-      heldTile: null,
-      facing: 'down',
-      facingX: 1,
-      moving: false,
-      animTime: 0,
-    };
+	const player = {
+	  x: 0.5,
+	  y: 0.5,
+	  form: 'chest',
+	  heldTile: null,
+	  facing: 'down',
+	  facingX: 1,       // 1 = right, -1 = left
+	  moving: false,
+	  animTime: 0,
+	};
 
     const chestState = {
       placed: false,
@@ -311,8 +299,6 @@
       targetIndex: 0,
     };
 
-    const monsters = [];
-    let nextForestSlimeSpawnCheckAt = performance.now() + FOREST_SLIME_SPAWN_CHECK_MS;
 
     const directionOrder = [
       { dx: 0, dy: -1, name: 'North' },
@@ -338,9 +324,8 @@
       dirtEdge: new Image(),
       tree: new Image(),
       treeB: new Image(),
-      shadow: new Image(),
-      shadowWalk: new Image(),
-      greenSlime: new Image(),
+	  shadow: new Image(),
+	  shadowWalk: new Image(),
     };
 
     const loaded = {
@@ -353,10 +338,10 @@
       dirtEdge: false,
       tree: false,
       treeB: false,
-      shadow: false,
-      shadowWalk: false,
-      greenSlime: false,
+	  shadow: false,
+	  shadowWalk: false,
     };
+
 
     const playerSpriteCanvas = document.createElement('canvas');
     playerSpriteCanvas.width = TILE_SIZE;
@@ -435,9 +420,10 @@
     loadAsset('dirtEdge', './tiles/edgetile_dirt.png');
     loadAsset('tree', './objects/tree.png');
     loadAsset('treeB', './objects/tree_b.png');
-    loadAsset('shadow', './mimic_shadow.png');
-    loadAsset('shadowWalk', './mimic_walking.png');
-    loadAsset('greenSlime', './monster_greenslime.png');
+	loadAsset('shadow', './mimic_shadow.png');
+	loadAsset('shadowWalk', './mimic_walking.png');
+
+
 
     const WATER_TOP_FRAMES = 4;
     const WATER_EDGE_FRAMES = 3;
@@ -471,6 +457,17 @@
       };
     }
 
+    function getCurrentSpriteCanvas() {
+      return player.form === 'shadow' ? shadowSpriteCanvas : playerSpriteCanvas;
+    }
+
+    function getChestPixelPosition() {
+      return {
+        x: chestState.x * TILE_SIZE,
+        y: chestState.y * TILE_SIZE,
+      };
+    }
+
     function updateCamera() {
       const playerPx = getPlayerPixelPosition();
       camera.x = Math.floor(canvas.width / 2 - playerPx.x);
@@ -488,34 +485,10 @@
         .filter((t) => !hasTile(t.x, t.y));
     }
 
+
     function getFacingDirection() {
       const dir = directionOrder.find((d) => d.name.toLowerCase() === player.facing);
       return dir || directionOrder[2];
-    }
-
-    function getFacingTile() {
-      const tile = getPlayerTile();
-      const dir = getFacingDirection();
-      return {
-        x: tile.x + dir.dx,
-        y: tile.y + dir.dy,
-      };
-    }
-
-    function isTreeSuppressed(key, now = performance.now()) {
-      const choppedAt = choppedTrees.get(key);
-      if (choppedAt == null) return false;
-      if (now - choppedAt >= TREE_REGROW_MS) {
-        choppedTrees.delete(key);
-        return false;
-      }
-      return true;
-    }
-
-    function chopTreeAt(x, y, now = performance.now()) {
-      const key = keyOf(x, y);
-      choppedTrees.set(key, now);
-      treeState.delete(key);
     }
 
     function getHeldTileTarget() {
@@ -533,16 +506,6 @@
       if (!target) return false;
       setTile(target.x, target.y, player.heldTile, true, performance.now());
       render();
-      return true;
-    }
-
-    function tryChopTree(now = performance.now()) {
-      if (player.form !== 'shadow') return false;
-      const target = getFacingTile();
-      const key = keyOf(target.x, target.y);
-      if (!computeDesiredTreeTiles(now).has(key)) return false;
-      chopTreeAt(target.x, target.y, now);
-      render(now);
       return true;
     }
 
@@ -577,10 +540,10 @@
       const playerTile = getPlayerTile();
       return playerTile.x === Math.floor(chestState.x) && playerTile.y === Math.floor(chestState.y);
     }
-	
-	function isItemBarOpen() {
-	  return !!getChestInteractTarget();
-	}
+
+    function isItemBarOpen() {
+      return player.form === 'shadow' && isOnChestTile();
+    }
 
     function syncItemBarUi() {
       const open = isItemBarOpen();
@@ -725,14 +688,14 @@
       }
     }
 
-    function hasWaterWithin3(x, y) {
-      for (let dy = -3; dy <= 3; dy++) {
-        for (let dx = -3; dx <= 3; dx++) {
-          if (tileAt(x + dx, y + dy) === 'water') return true;
-        }
-      }
-      return false;
-    }
+	function hasWaterWithin3(x, y) {
+	  for (let dy = -3; dy <= 3; dy++) {
+		for (let dx = -3; dx <= 3; dx++) {
+		  if (tileAt(x + dx, y + dy) === 'water') return true;
+		}
+	  }
+	  return false;
+	}
 
     function grassTileCount() {
       let count = 0;
@@ -748,7 +711,7 @@
       if (tileAt(x + 1, y) !== 'grass') return false;
       if (tileAt(x, y + 1) !== 'grass') return false;
       if (tileAt(x - 1, y) !== 'grass') return false;
-      if (!hasWaterWithin3(x, y)) return false;
+	  if (!hasWaterWithin3(x, y)) return false;
       return true;
     }
 
@@ -776,6 +739,9 @@
     function getBlockedSpawnTiles() {
       const occupied = new Set();
 
+      // Block tree bases from any tile touched by the player or the placed chest.
+      // Canopies are still allowed to visually overlap them, but bases cannot spawn
+      // under any part of their footprint.
       for (const key of getEntityOccupiedTiles(player.x, player.y, SPAWN_BLOCK_RADIUS)) {
         occupied.add(key);
       }
@@ -789,7 +755,7 @@
       return occupied;
     }
 
-    function computeDesiredTreeTiles(now = performance.now()) {
+    function computeDesiredTreeTiles() {
       const grassCount = grassTileCount();
       if (grassCount < 10) return new Set();
 
@@ -800,8 +766,9 @@
       const chosen = new Set();
       const candidates = [];
 
+      // Preserve any existing trees that are still valid. Occupancy blocking only applies
+      // to spawning new tree bases, not to already-established trees.
       for (const key of treeState.keys()) {
-        if (isTreeSuppressed(key, now)) continue;
         const [x, y] = key.split(',').map(Number);
         if (!canTreeSpawnAt(x, y)) continue;
         chosen.add(key);
@@ -809,7 +776,6 @@
 
       for (const [key, type] of world.entries()) {
         if (type !== 'grass') continue;
-        if (isTreeSuppressed(key, now)) continue;
         if (chosen.has(key)) continue;
         if (occupiedTiles.has(key)) continue;
         const [x, y] = key.split(',').map(Number);
@@ -825,6 +791,7 @@
 
       return chosen;
     }
+
 
     function reconcileTreeState(treeTiles, now) {
       for (const key of [...treeState.keys()]) {
@@ -971,63 +938,64 @@
       ctx.fillRect(iconX, iconY, iconSize, iconSize);
     }
 
-    function getShadowWalkFrame() {
-      if (!player.moving) return 0;
-      return Math.floor(player.animTime / SHADOW_WALK_FRAME_MS) % SHADOW_WALK_FRAMES;
-    }
 
-    function drawSpriteFrameMirrored(img, frameCount, frameIndex, dx, dy, dw, dh, flipX = false) {
-      const frameW = img.width / frameCount;
-      const sx = Math.floor(frameW * frameIndex);
+	function getShadowWalkFrame(now) {
+	  if (!player.moving) return 0;
+	  return Math.floor(player.animTime / SHADOW_WALK_FRAME_MS) % SHADOW_WALK_FRAMES;
+	}
 
-      if (!flipX) {
-        ctx.drawImage(img, sx, 0, frameW, img.height, dx, dy, dw, dh);
-        return;
-      }
+	function drawSpriteFrameMirrored(img, frameCount, frameIndex, dx, dy, dw, dh, flipX = false) {
+	  const frameW = img.width / frameCount;
+	  const sx = Math.floor(frameW * frameIndex);
 
-      ctx.save();
-      ctx.translate(dx + dw, dy);
-      ctx.scale(-1, 1);
-      ctx.drawImage(img, sx, 0, frameW, img.height, 0, 0, dw, dh);
-      ctx.restore();
-    }
+	  if (!flipX) {
+		ctx.drawImage(img, sx, 0, frameW, img.height, dx, dy, dw, dh);
+		return;
+	  }
 
-    function drawPlayer(now) {
-      if (player.form === 'chest') {
-        drawChestAtWorld(player.x, player.y);
-        return;
-      }
+	  ctx.save();
+	  ctx.translate(dx + dw, dy);
+	  ctx.scale(-1, 1);
+	  ctx.drawImage(img, sx, 0, frameW, img.height, 0, 0, dw, dh);
+	  ctx.restore();
+	}
+	
+	function drawPlayer(now) {
+  if (player.form === 'chest') {
+    drawChestAtWorld(player.x, player.y);
+    return;
+  }
 
-      const playerPx = getPlayerPixelPosition();
-      const screenX = Math.floor(camera.x + playerPx.x - TILE_SIZE / 2);
-      const screenY = Math.floor(camera.y + playerPx.y - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y);
-      const drawScale = 0.5;
-      const drawW = Math.floor(TILE_SIZE * drawScale);
-      const drawH = Math.floor(TILE_SIZE * drawScale);
-      const drawX = screenX + Math.floor((TILE_SIZE - drawW) / 2);
-      const drawY = screenY - 5 + Math.floor((TILE_SIZE - drawH) / 2);
+  const playerPx = getPlayerPixelPosition();
+  const screenX = Math.floor(camera.x + playerPx.x - TILE_SIZE / 2);
+  const screenY = Math.floor(camera.y + playerPx.y - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y);
+  const drawScale = 0.5;
+  const drawW = Math.floor(TILE_SIZE * drawScale);
+  const drawH = Math.floor(TILE_SIZE * drawScale);
+  const drawX = screenX + Math.floor((TILE_SIZE - drawW) / 2);
+  const drawY = screenY - 5 + Math.floor((TILE_SIZE - drawH) / 2);
 
-      if (loaded.shadowWalk) {
-        const frame = getShadowWalkFrame();
-        const flipX = player.facingX < 0;
-        drawSpriteFrameMirrored(
-          assets.shadowWalk,
-          SHADOW_WALK_FRAMES,
-          frame,
-          drawX,
-          drawY,
-          drawW,
-          drawH,
-          flipX
-        );
-      } else if (loaded.shadow) {
-        ctx.drawImage(assets.shadow, drawX, drawY, drawW, drawH);
-      } else {
-        ctx.drawImage(shadowSpriteCanvas, drawX, drawY, drawW, drawH);
-      }
+  if (loaded.shadowWalk) {
+    const frame = getShadowWalkFrame();
+    const flipX = player.facingX < 0;
+    drawSpriteFrameMirrored(
+      assets.shadowWalk,
+      SHADOW_WALK_FRAMES,
+      frame,
+      drawX,
+      drawY,
+      drawW,
+      drawH,
+      flipX
+    );
+  } else if (loaded.shadow) {
+    ctx.drawImage(assets.shadow, drawX, drawY, drawW, drawH);
+  } else {
+    ctx.drawImage(shadowSpriteCanvas, drawX, drawY, drawW, drawH);
+  }
 
-      drawHeldTileBubble(now);
-    }
+  drawHeldTileBubble(now);
+}
 
     function drawChestObject() {
       if (!chestState.placed) return;
@@ -1093,381 +1061,10 @@
       drawReflectionSprite(playerSpriteCanvas, player.x, player.y, bounds, now, 0.34);
     }
 
-    function getVisibleBiomeStats(bounds, treeTiles) {
-      let totalTiles = 0;
-      let grassTiles = 0;
-      let treeCount = 0;
-
-      for (let y = bounds.minY; y <= bounds.maxY; y++) {
-        for (let x = bounds.minX; x <= bounds.maxX; x++) {
-          const tile = tileAt(x, y);
-          if (!tile) continue;
-
-          totalTiles++;
-          if (tile === 'grass') grassTiles++;
-          if (treeTiles.has(keyOf(x, y))) treeCount++;
-        }
-      }
-
-      return { totalTiles, grassTiles, treeCount };
-    }
-
-    function getCurrentBiome(bounds, treeTiles) {
-      const stats = getVisibleBiomeStats(bounds, treeTiles);
-      if (stats.totalTiles <= 0) return null;
-
-      const grassRatio = stats.grassTiles / stats.totalTiles;
-
-      if (grassRatio >= 0.7 && stats.treeCount >= 10) {
-        return 'Forest';
-      }
-
-      return null;
-    }
-
-    function drawBiomeLabel(name) {
-      if (!name) return;
-
-      const boxW = 120;
-      const boxH = 34;
-      const padX = canvas.width - boxW - 14;
-      const padY = canvas.height - boxH - 14;
-
-      ctx.save();
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
-      ctx.fillRect(padX, padY, boxW, boxH);
-
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
-      ctx.strokeRect(padX + 0.5, padY + 0.5, boxW - 1, boxH - 1);
-
-      ctx.fillStyle = '#f2f2f2';
-      ctx.font = '16px Arial';
-      ctx.textBaseline = 'middle';
-      ctx.fillText(name, padX + 12, padY + boxH / 2);
-      ctx.restore();
-    }
-
-    function getMonsterDistanceToPlayer(monster) {
-      return Math.hypot(monster.x - player.x, monster.y - player.y);
-    }
-
-    function getNearbyInteractableMonster() {
-      if (player.form !== 'shadow') return null;
-
-      let best = null;
-      let bestDist = Infinity;
-
-      for (const monster of monsters) {
-        const dist = getMonsterDistanceToPlayer(monster);
-        if (dist > GREEN_SLIME_INTERACT_RANGE) continue;
-        if (dist < bestDist) {
-          best = monster;
-          bestDist = dist;
-        }
-      }
-
-      return best;
-    }
-
-		function getChestInteractTarget() {
-		  if (player.form !== 'shadow' || !chestState.placed) return null;
-
-		  const dist = Math.hypot(chestState.x - player.x, chestState.y - player.y);
-		  if (dist > CHEST_INTERACT_RANGE) return null;
-
-		  return {
-			type: 'chest',
-			x: chestState.x,
-			y: chestState.y,
-		  };
-		}
-
-    function getCurrentInteractionTarget() {
-      const chestTarget = getChestInteractTarget();
-      if (chestTarget) return chestTarget;
-
-      const monsterTarget = getNearbyInteractableMonster();
-      if (monsterTarget) {
-        return {
-          type: 'monster',
-          monster: monsterTarget,
-        };
-      }
-
-      const tileTarget = getHeldTileTarget();
-      if (tileTarget) {
-        return {
-          type: 'tile',
-          x: tileTarget.x,
-          y: tileTarget.y,
-          name: tileTarget.name,
-        };
-      }
-
-      return null;
-    }
-
-    function tryInteractWithMonster(now = performance.now()) {
-      const monster = getNearbyInteractableMonster();
-      if (!monster) return false;
-
-      monster.alertUntil = now + GREEN_SLIME_ALERT_MS;
-      render(now);
-      return true;
-    }
-
-    function getMonsterWalkFrame(monster) {
-      if (!monster.moving) return GREEN_SLIME_IDLE_FRAME;
-      return Math.floor(monster.animTime / GREEN_SLIME_FRAME_MS) % GREEN_SLIME_FRAMES;
-    }
-
-    function isMonsterTileWalkable(x, y, treeTiles, ignoreMonster = null) {
-      const tile = tileAt(x, y);
-      if (!tile) return false;
-      if (tile === 'water') return false;
-      if (treeTiles.has(keyOf(x, y))) return false;
-
-      const playerTile = getPlayerTile();
-      if (playerTile.x === x && playerTile.y === y) return false;
-
-      if (chestState.placed && Math.floor(chestState.x) === x && Math.floor(chestState.y) === y) {
-        return false;
-      }
-
-      for (const monster of monsters) {
-        if (monster === ignoreMonster) continue;
-        if (Math.floor(monster.x) === x && Math.floor(monster.y) === y) return false;
-      }
-
-      return true;
-    }
-
-    function getOffscreenSpawnCandidates(bounds, treeTiles) {
-      const candidates = [];
-
-      for (let y = bounds.minY - 1; y <= bounds.maxY + 1; y++) {
-        for (let x = bounds.minX - 1; x <= bounds.maxX + 1; x++) {
-          const isOffscreenRing =
-            x === bounds.minX - 1 ||
-            x === bounds.maxX + 1 ||
-            y === bounds.minY - 1 ||
-            y === bounds.maxY + 1;
-
-          if (!isOffscreenRing) continue;
-          if (tileAt(x, y) !== 'grass') continue;
-          if (!isMonsterTileWalkable(x, y, treeTiles)) continue;
-
-          const inwardX = Math.max(bounds.minX, Math.min(bounds.maxX, x));
-          const inwardY = Math.max(bounds.minY, Math.min(bounds.maxY, y));
-
-          let dirX = Math.sign(inwardX - x);
-          let dirY = Math.sign(inwardY - y);
-
-          if (dirX !== 0 && dirY !== 0) {
-            if (Math.random() < 0.5) dirY = 0;
-            else dirX = 0;
-          }
-
-          if (dirX === 0 && dirY === 0) continue;
-
-          candidates.push({ x, y, dirX, dirY });
-        }
-      }
-
-      return candidates;
-    }
-
-    function getMonsterAnchorDistance(monster) {
-      return Math.hypot(monster.x - (monster.anchorX + 0.5), monster.y - (monster.anchorY + 0.5));
-    }
-
-    function hasMonsterReachedAnchor(monster) {
-      return getMonsterAnchorDistance(monster) <= 0.75;
-    }
-
-    function getStepTowardAnchor(monster) {
-      const targetX = monster.anchorX + 0.5;
-      const targetY = monster.anchorY + 0.5;
-      let dx = targetX - monster.x;
-      let dy = targetY - monster.y;
-
-      if (Math.abs(dx) >= Math.abs(dy)) {
-        return { x: Math.sign(dx), y: 0 };
-      }
-      return { x: 0, y: Math.sign(dy) };
-    }
-
-    function trySpawnForestSlime(bounds, treeTiles, now) {
-      if (monsters.some((m) => m.type === 'greenSlime')) return;
-
-      const biomeName = getCurrentBiome(bounds, treeTiles);
-      if (biomeName !== 'Forest') return;
-
-      if (now < nextForestSlimeSpawnCheckAt) return;
-      nextForestSlimeSpawnCheckAt = now + FOREST_SLIME_SPAWN_CHECK_MS;
-
-      if (Math.random() > FOREST_SLIME_SPAWN_CHANCE) return;
-
-      const candidates = getOffscreenSpawnCandidates(bounds, treeTiles);
-      if (!candidates.length) return;
-
-      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-      const playerTile = getPlayerTile();
-
-      monsters.push({
-        type: 'greenSlime',
-        x: chosen.x + 0.5,
-        y: chosen.y + 0.5,
-        anchorX: playerTile.x,
-        anchorY: playerTile.y,
-        entering: true,
-        moveDirX: chosen.dirX,
-        moveDirY: chosen.dirY,
-        moveTimeLeft: 0.8 + Math.random() * 0.6,
-        idleTimeLeft: 0,
-        moving: true,
-        animTime: 0,
-        alertUntil: 0,
-      });
-    }
-
-    function updateMonsters(dt, now) {
-      const bounds = getVisibleBounds();
-      const treeTiles = computeDesiredTreeTiles(now);
-
-      trySpawnForestSlime(bounds, treeTiles, now);
-
-      for (const monster of monsters) {
-        if (monster.entering) {
-          const dir = getStepTowardAnchor(monster);
-          monster.moveDirX = dir.x;
-          monster.moveDirY = dir.y;
-
-          if (dir.x === 0 && dir.y === 0) {
-            monster.entering = false;
-            monster.moving = false;
-            monster.animTime = 0;
-            monster.idleTimeLeft = 1.0 + Math.random() * 2.0;
-            continue;
-          }
-
-          monster.moving = true;
-          monster.animTime += dt * 1000;
-
-          const step = GREEN_SLIME_SPEED * dt;
-          const nextX = monster.x + monster.moveDirX * step;
-          const nextY = monster.y + monster.moveDirY * step;
-          const tx = Math.floor(nextX);
-          const ty = Math.floor(nextY);
-
-          if (isMonsterTileWalkable(tx, ty, treeTiles, monster)) {
-            monster.x = nextX;
-            monster.y = nextY;
-          }
-
-          if (hasMonsterReachedAnchor(monster)) {
-            monster.entering = false;
-            monster.moving = false;
-            monster.animTime = 0;
-            monster.idleTimeLeft = 1.0 + Math.random() * 2.0;
-          }
-
-          continue;
-        }
-
-        if (monster.moveTimeLeft > 0) {
-          monster.moveTimeLeft -= dt;
-          monster.moving = true;
-          monster.animTime += dt * 1000;
-
-          const step = GREEN_SLIME_SPEED * dt;
-          const nextX = monster.x + monster.moveDirX * step;
-          const nextY = monster.y + monster.moveDirY * step;
-          const nextDist = Math.hypot(nextX - (monster.anchorX + 0.5), nextY - (monster.anchorY + 0.5));
-          const tx = Math.floor(nextX);
-          const ty = Math.floor(nextY);
-
-          if (nextDist <= GREEN_SLIME_WANDER_RADIUS && isMonsterTileWalkable(tx, ty, treeTiles, monster)) {
-            monster.x = nextX;
-            monster.y = nextY;
-          } else {
-            monster.moveTimeLeft = 0;
-          }
-
-          if (monster.moveTimeLeft <= 0) {
-            monster.moving = false;
-            monster.animTime = 0;
-            monster.idleTimeLeft = 1.0 + Math.random() * 2.0;
-          }
-
-          continue;
-        }
-
-        monster.moving = false;
-        monster.animTime = 0;
-        monster.idleTimeLeft -= dt;
-
-        if (monster.idleTimeLeft <= 0) {
-          const dirs = [
-            { x: 1, y: 0 },
-            { x: -1, y: 0 },
-            { x: 0, y: 1 },
-            { x: 0, y: -1 },
-          ];
-
-          const validDirs = dirs.filter((dir) => {
-            const testX = monster.x + dir.x;
-            const testY = monster.y + dir.y;
-            const testDist = Math.hypot(testX - (monster.anchorX + 0.5), testY - (monster.anchorY + 0.5));
-            return testDist <= GREEN_SLIME_WANDER_RADIUS &&
-              isMonsterTileWalkable(Math.floor(testX), Math.floor(testY), treeTiles, monster);
-          });
-
-          if (validDirs.length) {
-            const dir = validDirs[Math.floor(Math.random() * validDirs.length)];
-            monster.moveDirX = dir.x;
-            monster.moveDirY = dir.y;
-            monster.moveTimeLeft = 0.45 + Math.random() * 0.55;
-          } else {
-            monster.idleTimeLeft = 0.8 + Math.random() * 1.2;
-          }
-        }
-      }
-    }
-	function drawBuildHighlight() {
-	  if (!buildState.open) return;
-	  const target = getSelectedBuildTarget();
-	  if (!target) return;
-
-	  const screenX = camera.x + target.x * TILE_SIZE;
-	  const screenY = camera.y + target.y * TILE_SIZE;
-
-	  ctx.strokeStyle = '#ffd866';
-	  ctx.lineWidth = 3;
-	  ctx.strokeRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
-	  ctx.fillStyle = 'rgba(255, 216, 102, 0.16)';
-	  ctx.fillRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
-	}
-    function drawChestInteractHighlight() {
-      const target = getChestInteractTarget();
-      if (!target) return;
-
-      const screenX = camera.x + chestState.x * TILE_SIZE - TILE_SIZE / 2;
-      const screenY = camera.y + chestState.y * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y;
-
-      ctx.save();
-      ctx.strokeStyle = 'rgba(255, 230, 120, 0.95)';
-      ctx.lineWidth = 3;
-      ctx.strokeRect(screenX - 4, screenY - 4, TILE_SIZE + 8, TILE_SIZE + 8);
-      ctx.fillStyle = 'rgba(255, 230, 120, 0.10)';
-      ctx.fillRect(screenX - 4, screenY - 4, TILE_SIZE + 8, TILE_SIZE + 8);
-      ctx.restore();
-    }
 
     function drawHeldTileTargetHighlight() {
-      const target = getCurrentInteractionTarget();
-      if (!target || target.type !== 'tile') return;
-
+      const target = getHeldTileTarget();
+      if (!target) return;
       const screenX = camera.x + target.x * TILE_SIZE;
       const screenY = camera.y + target.y * TILE_SIZE;
       ctx.strokeStyle = 'rgba(156, 230, 255, 0.95)';
@@ -1477,77 +1074,19 @@
       ctx.fillRect(screenX + 8, screenY + 8, TILE_SIZE - 16, TILE_SIZE - 16);
     }
 
-    function drawMonsters(now) {
-      if (!loaded.greenSlime) return;
+    function drawBuildHighlight() {
+      if (!buildState.open) return;
+      const target = getSelectedBuildTarget();
+      if (!target) return;
 
-      const interactionTarget = getCurrentInteractionTarget();
-      const nearbyMonster = interactionTarget && interactionTarget.type === 'monster'
-        ? interactionTarget.monster
-        : null;
+      const screenX = camera.x + target.x * TILE_SIZE;
+      const screenY = camera.y + target.y * TILE_SIZE;
 
-      for (const monster of monsters) {
-        if (monster.type !== 'greenSlime') continue;
-
-        const frame = getMonsterWalkFrame(monster);
-        const drawScale = 0.48;
-        const drawW = Math.floor(TILE_SIZE * drawScale);
-        const drawH = Math.floor(TILE_SIZE * drawScale);
-        const screenX = Math.floor(camera.x + monster.x * TILE_SIZE - TILE_SIZE / 2);
-        const screenY = Math.floor(camera.y + monster.y * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y);
-        const drawX = screenX + Math.floor((TILE_SIZE - drawW) / 2);
-        const drawY = screenY - 4 + Math.floor((TILE_SIZE - drawH) / 2);
-
-        if (monster === nearbyMonster) {
-          ctx.save();
-          ctx.strokeStyle = 'rgba(255, 230, 120, 0.95)';
-          ctx.lineWidth = 3;
-          ctx.strokeRect(drawX - 4, drawY - 4, drawW + 8, drawH + 8);
-          ctx.fillStyle = 'rgba(255, 230, 120, 0.10)';
-          ctx.fillRect(drawX - 4, drawY - 4, drawW + 8, drawH + 8);
-          ctx.restore();
-        }
-
-        drawAnimatedStripFrame(
-          assets.greenSlime,
-          GREEN_SLIME_FRAMES,
-          frame,
-          drawX,
-          drawY,
-          drawW,
-          drawH
-        );
-
-        if (monster.alertUntil && now < monster.alertUntil) {
-          const bubbleW = 22;
-          const bubbleH = 20;
-          const bubbleX = drawX + Math.floor((drawW - bubbleW) / 2);
-          const bubbleY = drawY - 18;
-
-          ctx.save();
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
-          ctx.fillRect(bubbleX, bubbleY, bubbleW, bubbleH);
-
-          ctx.strokeStyle = 'rgba(40,40,40,0.9)';
-          ctx.lineWidth = 2;
-          ctx.strokeRect(bubbleX + 0.5, bubbleY + 0.5, bubbleW - 1, bubbleH - 1);
-
-          ctx.beginPath();
-          ctx.moveTo(bubbleX + 8, bubbleY + bubbleH);
-          ctx.lineTo(bubbleX + 11, bubbleY + bubbleH + 5);
-          ctx.lineTo(bubbleX + 14, bubbleY + bubbleH);
-          ctx.closePath();
-          ctx.fillStyle = 'rgba(255,255,255,0.95)';
-          ctx.fill();
-          ctx.stroke();
-
-          ctx.fillStyle = '#111';
-          ctx.font = 'bold 16px Arial';
-          ctx.textAlign = 'center';
-          ctx.textBaseline = 'middle';
-          ctx.fillText('!', bubbleX + bubbleW / 2, bubbleY + bubbleH / 2 + 1);
-          ctx.restore();
-        }
-      }
+      ctx.strokeStyle = '#ffd866';
+      ctx.lineWidth = 3;
+      ctx.strokeRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
+      ctx.fillStyle = 'rgba(255, 216, 102, 0.16)';
+      ctx.fillRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
     }
 
     function getVisibleBounds() {
@@ -1563,8 +1102,7 @@
       ctx.clearRect(0, 0, canvas.width, canvas.height);
 
       const bounds = getVisibleBounds();
-      const treeTiles = computeDesiredTreeTiles(now);
-      const biomeName = getCurrentBiome(bounds, treeTiles);
+      const treeTiles = computeDesiredTreeTiles();
       reconcileTreeState(treeTiles, now);
 
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -1597,12 +1135,10 @@
       }
 
       drawBuildHighlight();
-      drawChestInteractHighlight();
       drawHeldTileTargetHighlight();
 
       drawPlayerReflection(bounds, now);
       drawChestObject();
-      drawMonsters(now);
       drawPlayer(now);
 
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -1612,8 +1148,6 @@
           drawTreeTopAtTile(x, y, getTreeAnimationProgress(tileKey, now));
         }
       }
-
-      drawBiomeLabel(biomeName);
 
       const playerTile = getPlayerTile();
       const handText = player.form === 'shadow' && player.heldTile ? ` · Holding: ${player.heldTile}` : '';
@@ -1628,7 +1162,7 @@
       const tile = tileAt(tx, ty);
       if (!tile) return false;
       if (tile === 'water') return false;
-      if (computeDesiredTreeTiles(performance.now()).has(keyOf(tx, ty))) return false;
+      if (computeDesiredTreeTiles().has(keyOf(tx, ty))) return false;
       return true;
     }
 
@@ -1658,12 +1192,11 @@
       if (input.up) moveY -= 1;
       if (input.down) moveY += 1;
 
-      if (moveX === 0 && moveY === 0) {
-        player.moving = false;
-        player.animTime = 0;
-        return;
-      }
-
+	if (moveX === 0 && moveY === 0) {
+	  player.moving = false;
+	  player.animTime = 0;
+	  return;
+	}
       const rawMoveX = moveX;
       const rawMoveY = moveY;
       if (Math.abs(rawMoveX) >= Math.abs(rawMoveY)) {
@@ -1678,11 +1211,11 @@
       moveX /= length;
       moveY /= length;
 
-      player.moving = true;
-      player.animTime += dt * 1000;
+		player.moving = true;
+		player.animTime += dt * 1000;
 
-      if (rawMoveX > 0) player.facingX = 1;
-      else if (rawMoveX < 0) player.facingX = -1;
+		if (rawMoveX > 0) player.facingX = 1;
+		else if (rawMoveX < 0) player.facingX = -1;
 
       const speed = player.form === 'chest' ? CHEST_SPEED : SHADOW_SPEED;
       const step = speed * dt;
@@ -1697,12 +1230,23 @@
       }
     }
 
+    function getReentryTile() {
+      if (!chestState.placed) return null;
+      const playerTile = getPlayerTile();
+      const chestTileX = Math.floor(chestState.x);
+      const chestTileY = Math.floor(chestState.y);
+      if (playerTile.x === chestTileX && playerTile.y === chestTileY) {
+        return { x: chestState.x, y: chestState.y };
+      }
+      return null;
+    }
+
     function mountChest() {
-      const target = getChestInteractTarget();
-      if (!target) return;
+      const reentry = getReentryTile();
+      if (!reentry) return;
       player.form = 'chest';
-      player.x = chestState.x;
-      player.y = chestState.y;
+      player.x = reentry.x;
+      player.y = reentry.y;
       chestState.placed = false;
       syncItemBarUi();
       render();
@@ -1776,7 +1320,7 @@
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
       const movementKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'];
-      const uiKeys = ['e', 'f', 'escape', '1', '2', '3', '4', ' '];
+      const uiKeys = ['e', 'escape', '1', '2', '3', '4', ' '];
 
       if ([...movementKeys, ...uiKeys].includes(key)) {
         e.preventDefault();
@@ -1784,24 +1328,14 @@
 
       if (key === ' ' && !e.repeat) {
         if (player.form === 'shadow') {
-          const target = getCurrentInteractionTarget();
-
-          if (target?.type === 'chest') {
+          if (isOnChestTile()) {
             mountChest();
             return;
           }
-
-          if (target?.type === 'monster') {
-            if (tryInteractWithMonster()) return;
-          }
-
-          if (target?.type === 'tile') {
-            if (!buildState.open && player.heldTile && placeHeldTile()) {
-              return;
-            }
+          if (!buildState.open && player.heldTile && placeHeldTile()) {
+            return;
           }
         }
-
         toggleShadowForm();
         return;
       }
@@ -1809,10 +1343,6 @@
       if (key === 'e' && !e.repeat) {
         toggleBuildMenu();
         return;
-      }
-
-      if (key === 'f' && !e.repeat) {
-        if (tryChopTree()) return;
       }
 
       if (key === 'escape') {
@@ -1865,8 +1395,7 @@
       const dt = Math.min((now - lastTime) / 1000, 0.05);
       lastTime = now;
       updatePlayer(dt);
-      updateMonsters(dt, now);
-      render(now);
+      render();
       requestAnimationFrame(frame);
     }
 
