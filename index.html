@@ -42,8 +42,7 @@
       display: block;
     }
 
-    .hud,
-    .build-menu {
+    .hud {
       width: min(90vw, 720px);
       background: var(--panel);
       border: 1px solid #2c2c2c;
@@ -74,43 +73,6 @@
       background: #252525;
       border: 1px solid #333;
       font-size: 14px;
-    }
-
-    .build-menu {
-      display: none;
-      align-items: center;
-    }
-
-    .build-menu.open {
-      display: flex;
-    }
-
-    .build-label {
-      color: var(--muted);
-      font-size: 14px;
-      margin-right: 6px;
-    }
-
-    .tile-btn {
-      border: 1px solid #333;
-      background: #252525;
-      color: var(--text);
-      border-radius: 10px;
-      padding: 10px 14px;
-      cursor: pointer;
-      font: inherit;
-    }
-
-    .tile-btn:hover,
-    .tile-btn:focus-visible {
-      border-color: #6e6e6e;
-      outline: none;
-    }
-
-    .hint {
-      color: var(--muted);
-      font-size: 13px;
-      margin-left: auto;
     }
 
     .canvas-shell {
@@ -165,6 +127,7 @@
       outline-offset: -4px;
       background: rgba(255,255,255,0.08);
     }
+
   </style>
 </head>
 <body>
@@ -190,13 +153,6 @@
       </div>
       <div class="pill" id="pos">Tile: 0, 0</div>
     </div>
-    <div class="build-menu" id="buildMenu">
-      <div class="build-label" id="buildLabel">Build target: none</div>
-      <button class="tile-btn" data-tile="grass">1 · Grass</button>
-      <button class="tile-btn" data-tile="dirt">2 · Dirt</button>
-      <button class="tile-btn" data-tile="water">3 · Water</button>
-      <div class="hint">Use arrows/WASD to choose an adjacent empty tile. Press E or Esc to close.</div>
-    </div>
   </div>
 
   <script>
@@ -205,9 +161,6 @@
     ctx.imageSmoothingEnabled = false;
 
     const posLabel = document.getElementById('pos');
-    const buildMenu = document.getElementById('buildMenu');
-    const buildLabel = document.getElementById('buildLabel');
-    const tileButtons = [...document.querySelectorAll('.build-menu#buildMenu .tile-btn')];
     const itemBar = document.getElementById('itemBar');
     const itemButtons = [...document.querySelectorAll('.item-bar .item-slot[data-equip]')];
 
@@ -258,11 +211,11 @@
       return world.has(keyOf(x, y));
     }
 
-    for (let y = -1; y <= 1; y++) {
-      for (let x = -1; x <= 1; x++) {
-        setTile(x, y, 'grass', false);
-      }
-    }
+	for (let y = -1; y <= 1; y++) {
+	  for (let x = -1; x <= 1; x++) {
+		setTile(x, y, 'dirt', false);
+	  }
+	}
 
     const PLAYER_RADIUS = 0.22;
     const TREE_MAX_RATIO = 0.20;
@@ -306,11 +259,6 @@
       y: 0,
     };
 
-    const buildState = {
-      open: false,
-      targetIndex: 0,
-    };
-
     const monsters = [];
     let nextForestSlimeSpawnCheckAt = performance.now() + FOREST_SLIME_SPAWN_CHECK_MS;
 
@@ -341,22 +289,26 @@
       shadow: new Image(),
       shadowWalk: new Image(),
       greenSlime: new Image(),
+	  chest: new Image(),
+	  chestMounted: new Image(),
     };
 
-    const loaded = {
-      grass: false,
-      grassB: false,
-      dirt: false,
-      water: false,
-      waterEdge: false,
-      grassEdge: false,
-      dirtEdge: false,
-      tree: false,
-      treeB: false,
-      shadow: false,
-      shadowWalk: false,
-      greenSlime: false,
-    };
+	const loaded = {
+	  grass: false,
+	  grassB: false,
+	  dirt: false,
+	  water: false,
+	  waterEdge: false,
+	  grassEdge: false,
+	  dirtEdge: false,
+	  tree: false,
+	  treeB: false,
+	  shadow: false,
+	  shadowWalk: false,
+	  greenSlime: false,
+	  chest: false,
+	  chestMounted: false,
+	};
 
     const playerSpriteCanvas = document.createElement('canvas');
     playerSpriteCanvas.width = TILE_SIZE;
@@ -438,7 +390,9 @@
     loadAsset('shadow', './mimic_shadow.png');
     loadAsset('shadowWalk', './mimic_walking.png');
     loadAsset('greenSlime', './monster_greenslime.png');
-
+	loadAsset('chest', './mimic_chest.png');	
+	loadAsset('chestMounted', './mimic_chest_mounted.png');
+	
     const WATER_TOP_FRAMES = 4;
     const WATER_EDGE_FRAMES = 3;
     const WATER_ANIM_MS = 220;
@@ -475,17 +429,6 @@
       const playerPx = getPlayerPixelPosition();
       camera.x = Math.floor(canvas.width / 2 - playerPx.x);
       camera.y = Math.floor(canvas.height / 2 - playerPx.y - EDGE_HEIGHT / 2);
-    }
-
-    function getBuildTargets() {
-      const tile = getPlayerTile();
-      return directionOrder
-        .map((dir) => ({
-          ...dir,
-          x: tile.x + dir.dx,
-          y: tile.y + dir.dy,
-        }))
-        .filter((t) => !hasTile(t.x, t.y));
     }
 
     function getFacingDirection() {
@@ -546,41 +489,15 @@
       return true;
     }
 
-    function syncBuildUi() {
-      buildMenu.classList.toggle('open', buildState.open && player.form === 'chest');
-
-      if (!buildState.open || player.form !== 'chest') return;
-
-      const targets = getBuildTargets();
-      if (!targets.length) {
-        buildLabel.textContent = 'Build target: no adjacent empty tiles';
-        return;
-      }
-
-      if (buildState.targetIndex >= targets.length) {
-        buildState.targetIndex = 0;
-      }
-
-      const target = targets[buildState.targetIndex];
-      buildLabel.textContent = `Build target: ${target.name} (${target.x}, ${target.y})`;
-    }
-
-    function getSelectedBuildTarget() {
-      const targets = getBuildTargets();
-      if (!targets.length) return null;
-      if (buildState.targetIndex >= targets.length) buildState.targetIndex = 0;
-      return targets[buildState.targetIndex];
-    }
-
     function isOnChestTile() {
       if (player.form !== 'shadow' || !chestState.placed) return false;
       const playerTile = getPlayerTile();
       return playerTile.x === Math.floor(chestState.x) && playerTile.y === Math.floor(chestState.y);
     }
-	
-	function isItemBarOpen() {
-	  return !!getChestInteractTarget();
-	}
+
+    function isItemBarOpen() {
+      return !!getChestInteractTarget();
+    }
 
     function syncItemBarUi() {
       const open = isItemBarOpen();
@@ -912,11 +829,32 @@
       drawTreeLayerAtTile(tileX, tileY, progress, 'top');
     }
 
-    function drawChestAtWorld(cx, cy) {
-      const screenX = camera.x + cx * TILE_SIZE - TILE_SIZE / 2;
-      const screenY = camera.y + cy * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y;
-      ctx.drawImage(playerSpriteCanvas, screenX, screenY, TILE_SIZE, TILE_SIZE);
-    }
+	function drawChestAtWorld(cx, cy) {
+	  const screenX = camera.x + cx * TILE_SIZE - TILE_SIZE / 2;
+	  const screenY = camera.y + cy * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y;
+
+	  const drawScale = 0.75;
+	  const drawW = Math.floor(TILE_SIZE * drawScale);
+	  const drawH = Math.floor(TILE_SIZE * drawScale);
+	  const drawX = screenX + Math.floor((TILE_SIZE - drawW) / 2);
+	  const drawY = screenY + Math.floor((TILE_SIZE - drawH) / 2);
+
+	  const usingMountedChest = player.form === 'chest';
+	  const chestImage = usingMountedChest ? assets.chestMounted : assets.chest;
+	  const chestLoaded = usingMountedChest ? loaded.chestMounted : loaded.chest;
+
+	  if (chestLoaded) {
+		ctx.drawImage(chestImage, drawX, drawY, drawW, drawH);
+		return;
+	  }
+
+	  if (loaded.chest) {
+		ctx.drawImage(assets.chest, drawX, drawY, drawW, drawH);
+		return;
+	  }
+
+	  ctx.drawImage(playerSpriteCanvas, screenX, screenY, TILE_SIZE, TILE_SIZE);
+	}
 
     function drawHeldTileBubble(now) {
       if (player.form !== 'shadow' || !player.heldTile) return;
@@ -1169,18 +1107,18 @@
       return best;
     }
 
-		function getChestInteractTarget() {
-		  if (player.form !== 'shadow' || !chestState.placed) return null;
+    function getChestInteractTarget() {
+      if (player.form !== 'shadow' || !chestState.placed) return null;
 
-		  const dist = Math.hypot(chestState.x - player.x, chestState.y - player.y);
-		  if (dist > CHEST_INTERACT_RANGE) return null;
+      const dist = Math.hypot(chestState.x - player.x, chestState.y - player.y);
+      if (dist > CHEST_INTERACT_RANGE) return null;
 
-		  return {
-			type: 'chest',
-			x: chestState.x,
-			y: chestState.y,
-		  };
-		}
+      return {
+        type: 'chest',
+        x: chestState.x,
+        y: chestState.y,
+      };
+    }
 
     function getCurrentInteractionTarget() {
       const chestTarget = getChestInteractTarget();
@@ -1434,20 +1372,7 @@
         }
       }
     }
-	function drawBuildHighlight() {
-	  if (!buildState.open) return;
-	  const target = getSelectedBuildTarget();
-	  if (!target) return;
 
-	  const screenX = camera.x + target.x * TILE_SIZE;
-	  const screenY = camera.y + target.y * TILE_SIZE;
-
-	  ctx.strokeStyle = '#ffd866';
-	  ctx.lineWidth = 3;
-	  ctx.strokeRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
-	  ctx.fillStyle = 'rgba(255, 216, 102, 0.16)';
-	  ctx.fillRect(screenX + 6, screenY + 6, TILE_SIZE - 12, TILE_SIZE - 12);
-	}
     function drawChestInteractHighlight() {
       const target = getChestInteractTarget();
       if (!target) return;
@@ -1596,7 +1521,6 @@
         }
       }
 
-      drawBuildHighlight();
       drawChestInteractHighlight();
       drawHeldTileTargetHighlight();
 
@@ -1618,7 +1542,6 @@
       const playerTile = getPlayerTile();
       const handText = player.form === 'shadow' && player.heldTile ? ` · Holding: ${player.heldTile}` : '';
       posLabel.textContent = `Form: ${player.form} · Tile: ${playerTile.x}, ${playerTile.y}${handText}`;
-      syncBuildUi();
       syncItemBarUi();
     }
 
@@ -1648,8 +1571,6 @@
     }
 
     function updatePlayer(dt) {
-      if (buildState.open) return;
-
       let moveX = 0;
       let moveY = 0;
 
@@ -1714,50 +1635,34 @@
     }
 
     function toggleShadowForm() {
-      if (buildState.open) buildState.open = false;
+  if (player.form === 'chest') {
+    chestState.placed = true;
+    chestState.x = player.x;
+    chestState.y = player.y;
 
-      if (player.form === 'chest') {
-        chestState.placed = true;
-        chestState.x = player.x;
-        chestState.y = player.y;
-        player.form = 'shadow';
-        player.heldTile = null;
-        syncItemBarUi();
-        render();
-        return;
-      }
+    const exitX = chestState.x;
+    const exitY = chestState.y + 0.30;
 
-      if (isOnChestTile()) {
-        mountChest();
-      }
+    player.form = 'shadow';
+    player.heldTile = null;
+
+    if (isWalkableBody(exitX, exitY)) {
+      player.x = exitX;
+      player.y = exitY;
+    } else {
+      player.x = chestState.x;
+      player.y = chestState.y;
     }
 
-    function toggleBuildMenu() {
-      if (player.form !== 'chest') return;
-      buildState.open = !buildState.open;
-      buildState.targetIndex = 0;
-      render();
-    }
+    syncItemBarUi();
+    render();
+    return;
+  }
 
-    function cycleBuildTarget(step) {
-      const targets = getBuildTargets();
-      if (!targets.length) return;
-      buildState.targetIndex = (buildState.targetIndex + step + targets.length) % targets.length;
-      render();
-    }
-
-    function placeTile(type) {
-      const target = getSelectedBuildTarget();
-      if (!target) return;
-      setTile(target.x, target.y, type, true, performance.now());
-      buildState.open = false;
-      buildState.targetIndex = 0;
-      render();
-    }
-
-    tileButtons.forEach((btn) => {
-      btn.addEventListener('click', () => placeTile(btn.dataset.tile));
-    });
+  if (isOnChestTile()) {
+    mountChest();
+  }
+}
 
     itemButtons.forEach((btn) => {
       btn.addEventListener('click', () => {
@@ -1776,7 +1681,7 @@
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
       const movementKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'];
-      const uiKeys = ['e', 'f', 'escape', '1', '2', '3', '4', ' '];
+      const uiKeys = ['f', 'escape', '1', '2', '3', '4', ' '];
 
       if ([...movementKeys, ...uiKeys].includes(key)) {
         e.preventDefault();
@@ -1796,7 +1701,7 @@
           }
 
           if (target?.type === 'tile') {
-            if (!buildState.open && player.heldTile && placeHeldTile()) {
+            if (player.heldTile && placeHeldTile()) {
               return;
             }
           }
@@ -1806,21 +1711,8 @@
         return;
       }
 
-      if (key === 'e' && !e.repeat) {
-        toggleBuildMenu();
-        return;
-      }
-
       if (key === 'f' && !e.repeat) {
         if (tryChopTree()) return;
-      }
-
-      if (key === 'escape') {
-        if (buildState.open) {
-          buildState.open = false;
-          render();
-          return;
-        }
       }
 
       if (isItemBarOpen()) {
@@ -1828,21 +1720,6 @@
         if (key === '2' && !e.repeat) return setHeldTile('grass');
         if (key === '3' && !e.repeat) return setHeldTile('dirt');
         if (key === '4' && !e.repeat) return setHeldTile('water');
-      }
-
-      if (buildState.open) {
-        if ((key === 'arrowup' || key === 'w' || key === 'arrowleft' || key === 'a') && !e.repeat) {
-          cycleBuildTarget(-1);
-          return;
-        }
-        if ((key === 'arrowdown' || key === 's' || key === 'arrowright' || key === 'd') && !e.repeat) {
-          cycleBuildTarget(1);
-          return;
-        }
-        if (key === '1' && !e.repeat) return placeTile('grass');
-        if (key === '2' && !e.repeat) return placeTile('dirt');
-        if (key === '3' && !e.repeat) return placeTile('water');
-        return;
       }
 
       setMovementKey(key, true);
