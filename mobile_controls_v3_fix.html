@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover" />
+  <title>Mobile Controls</title>
+  <style>
+    :root {
+      --safe-bottom: max(16px, env(safe-area-inset-bottom));
+      --safe-top: max(12px, env(safe-area-inset-top));
+    }
+    * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; user-select: none; }
+    html, body {
+      margin: 0;
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: transparent;
+      touch-action: none;
+      font-family: Arial, Helvetica, sans-serif;
+    }
+    body { pointer-events: none; }
+    .root { position: fixed; inset: 0; pointer-events: none; }
+    .left-zone {
+      position: fixed;
+      left: 0;
+      top: 0;
+      width: 30vw;
+      height: 100vh;
+      pointer-events: auto;
+      touch-action: none;
+    }
+    .joystick {
+      position: fixed;
+      width: 132px;
+      height: 132px;
+      margin-left: -66px;
+      margin-top: -66px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.28);
+      background: rgba(20,20,20,0.18);
+      box-shadow: inset 0 0 0 1px rgba(255,255,255,0.08);
+      display: none;
+      pointer-events: none;
+      backdrop-filter: blur(2px);
+    }
+    .joystick.active { display: block; }
+    .joystick-knob {
+      position: absolute;
+      left: 50%;
+      top: 50%;
+      width: 58px;
+      height: 58px;
+      margin-left: -29px;
+      margin-top: -29px;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.18);
+      border: 2px solid rgba(255,255,255,0.4);
+      box-shadow: 0 4px 18px rgba(0,0,0,0.35);
+    }
+    .right-buttons {
+      position: fixed;
+      right: 16px;
+      bottom: calc(var(--safe-bottom) + 84px);
+      display: grid;
+      gap: 14px;
+      pointer-events: auto;
+    }
+    .action-btn {
+      width: 72px;
+      height: 72px;
+      border-radius: 50%;
+      border: 2px solid rgba(255,255,255,0.45);
+      background: rgba(20,20,20,0.42);
+      color: #fff;
+      font-weight: 700;
+      font-size: 15px;
+      letter-spacing: 0.04em;
+      backdrop-filter: blur(3px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+      pointer-events: auto;
+    }
+    .action-btn:active,
+    .action-btn.pressed { transform: scale(0.96); }
+    .menu-buttons {
+      position: fixed;
+      right: 96px;
+      bottom: calc(var(--safe-bottom) + 102px);
+      display: none;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    .menu-buttons.open {
+      display: grid;
+    }
+    .menu-btn {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      border: 2px solid rgba(255,255,255,0.45);
+      background: rgba(20,20,20,0.42);
+      color: #fff;
+      font-weight: 700;
+      font-size: 24px;
+      line-height: 1;
+      backdrop-filter: blur(3px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+      pointer-events: auto;
+    }
+    .inventory {
+      position: fixed;
+      left: calc(30vw + 12px);
+      right: 98px;
+      bottom: var(--safe-bottom);
+      display: none;
+      gap: 8px;
+      padding: 8px;
+      border: 2px solid rgba(255,255,255,0.35);
+      border-radius: 14px;
+      background: rgba(0,0,0,0.42);
+      backdrop-filter: blur(4px);
+      pointer-events: auto;
+      overflow-x: auto;
+    }
+    .inventory.open { display: flex; }
+    .slot {
+      min-width: 56px;
+      width: 56px;
+      height: 56px;
+      border-radius: 10px;
+      border: 2px solid rgba(255,255,255,0.55);
+      background: rgba(8,8,8,0.72);
+      display: grid;
+      place-items: center;
+      color: #fff;
+      font-size: 12px;
+      padding: 0;
+      pointer-events: auto;
+    }
+    .slot img {
+      width: 38px;
+      height: 38px;
+      object-fit: contain;
+      image-rendering: pixelated;
+      pointer-events: none;
+    }
+    .slot.selected {
+      outline: 3px solid #ffd866;
+      outline-offset: -3px;
+      background: rgba(255,255,255,0.12);
+    }
+    .slot.disabled {
+      opacity: 0.35;
+    }
+    .slot.empty-label {
+      font-size: 11px;
+      letter-spacing: 0.03em;
+    }
+    .hint {
+      position: fixed;
+      left: 12px;
+      top: var(--safe-top);
+      padding: 8px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      color: rgba(255,255,255,0.8);
+      background: rgba(0,0,0,0.24);
+      pointer-events: none;
+    }
+    @media (hover: hover) and (pointer: fine) {
+      body { display: none; }
+    }
+  </style>
+</head>
+<body>
+  <div class="root">
+    <div class="hint">Touch left side to move</div>
+    <div class="left-zone" id="leftZone"></div>
+    <div class="joystick" id="joystick"><div class="joystick-knob" id="joystickKnob"></div></div>
+    <div class="menu-buttons" id="menuButtons">
+      <button class="menu-btn" id="menuUpBtn" type="button" aria-label="Menu up">▲</button>
+      <button class="menu-btn" id="menuDownBtn" type="button" aria-label="Menu down">▼</button>
+    </div>
+    <div class="right-buttons">
+      <button class="action-btn" id="spaceBtn" type="button">ACT</button>
+      <button class="action-btn" id="escapeBtn" type="button">BACK</button>
+    </div>
+    <div class="inventory" id="inventory"></div>
+  </div>
+  <script>
+    const parentOrigin = '*';
+    const leftZone = document.getElementById('leftZone');
+    const joystick = document.getElementById('joystick');
+    const joystickKnob = document.getElementById('joystickKnob');
+    const inventory = document.getElementById('inventory');
+    const spaceBtn = document.getElementById('spaceBtn');
+    const escapeBtn = document.getElementById('escapeBtn');
+    const menuButtons = document.getElementById('menuButtons');
+    const menuUpBtn = document.getElementById('menuUpBtn');
+    const menuDownBtn = document.getElementById('menuDownBtn');
+
+    const state = {
+      pointerId: null,
+      originX: 0,
+      originY: 0,
+      radius: 44,
+      mobileEnabled: true,
+      inventoryOpen: false,
+      menuOpen: false,
+      inventory: [],
+      inventorySignature: '',
+    };
+
+    function send(message) {
+      window.parent.postMessage(message, parentOrigin);
+    }
+
+    function updateKnob(dx, dy) {
+      joystickKnob.style.transform = `translate(${dx}px, ${dy}px)`;
+    }
+
+    function applyVector(clientX, clientY) {
+      const rawDx = clientX - state.originX;
+      const rawDy = clientY - state.originY;
+      const dist = Math.hypot(rawDx, rawDy);
+      const limitedDist = Math.min(dist, state.radius);
+      const angle = Math.atan2(rawDy, rawDx || 0.0001);
+      const dx = dist > 0 ? Math.cos(angle) * limitedDist : 0;
+      const dy = dist > 0 ? Math.sin(angle) * limitedDist : 0;
+      updateKnob(dx, dy);
+
+      const nx = dx / state.radius;
+      const ny = dy / state.radius;
+      const threshold = 0.28;
+      send({
+        type: 'mobile-move',
+        up: ny < -threshold,
+        down: ny > threshold,
+        left: nx < -threshold,
+        right: nx > threshold,
+      });
+    }
+
+    function endJoystick() {
+      state.pointerId = null;
+      joystick.classList.remove('active');
+      updateKnob(0, 0);
+      send({ type: 'mobile-clear-move' });
+    }
+
+    leftZone.addEventListener('pointerdown', (event) => {
+      if (!state.mobileEnabled) return;
+      state.pointerId = event.pointerId;
+      state.originX = event.clientX;
+      state.originY = event.clientY;
+      joystick.style.left = `${state.originX}px`;
+      joystick.style.top = `${state.originY}px`;
+      joystick.classList.add('active');
+      updateKnob(0, 0);
+      applyVector(event.clientX, event.clientY);
+      leftZone.setPointerCapture(event.pointerId);
+      event.preventDefault();
+    });
+
+    leftZone.addEventListener('pointermove', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      applyVector(event.clientX, event.clientY);
+      event.preventDefault();
+    });
+
+    leftZone.addEventListener('pointerup', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      endJoystick();
+      event.preventDefault();
+    });
+
+    leftZone.addEventListener('pointercancel', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      endJoystick();
+    });
+
+
+    window.addEventListener('pointerup', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      endJoystick();
+      event.preventDefault();
+    }, { passive: false });
+
+    window.addEventListener('pointercancel', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      endJoystick();
+      event.preventDefault();
+    }, { passive: false });
+
+    function bindPress(button, onPress, onRelease) {
+      const press = (event) => {
+        button.classList.add('pressed');
+        onPress();
+        event.preventDefault();
+      };
+      const release = (event) => {
+        button.classList.remove('pressed');
+        if (onRelease) onRelease();
+        event.preventDefault();
+      };
+      button.addEventListener('pointerdown', press);
+      button.addEventListener('pointerup', release);
+      button.addEventListener('pointercancel', release);
+      button.addEventListener('pointerleave', release);
+    }
+
+    bindPress(spaceBtn, () => send({ type: 'mobile-space' }), () => send({ type: 'mobile-space-release' }));
+    bindPress(escapeBtn, () => send({ type: 'mobile-escape' }));
+    bindPress(menuUpBtn, () => send({ type: 'mobile-menu-up' }));
+    bindPress(menuDownBtn, () => send({ type: 'mobile-menu-down' }));
+
+    function getInventorySignature(items) {
+      return JSON.stringify((items || []).map((item) => ({
+        equip: item.equip || '',
+        label: item.label || '',
+        selected: !!item.selected,
+        disabled: !!item.disabled,
+        icon: item.icon || '',
+      })));
+    }
+
+    function renderInventory(force = false) {
+      inventory.classList.toggle('open', !!state.inventoryOpen);
+      const nextSignature = getInventorySignature(state.inventory);
+      if (!force && state.inventorySignature === nextSignature) return;
+      state.inventorySignature = nextSignature;
+      inventory.innerHTML = '';
+      for (const item of state.inventory || []) {
+        const button = document.createElement('button');
+        button.type = 'button';
+        button.className = 'slot';
+        if (item.selected) button.classList.add('selected');
+        if (item.disabled) button.classList.add('disabled');
+        button.disabled = !!item.disabled;
+        button.setAttribute('aria-label', item.label || item.equip || 'item');
+        if (item.icon) {
+          const img = document.createElement('img');
+          img.src = item.icon;
+          img.alt = item.label || item.equip || 'item';
+          button.appendChild(img);
+        } else {
+          const span = document.createElement('span');
+          span.className = 'empty-label';
+          span.textContent = item.label || 'Empty';
+          button.appendChild(span);
+        }
+        const activate = (event) => {
+          if (button.disabled) {
+            event.preventDefault();
+            return;
+          }
+          send({ type: 'mobile-select-item', equip: item.equip || '' });
+          event.preventDefault();
+        };
+        button.addEventListener('pointerdown', activate, { passive: false });
+        button.addEventListener('click', (event) => event.preventDefault());
+        inventory.appendChild(button);
+      }
+    }
+
+    window.addEventListener('message', (event) => {
+      const data = event.data || {};
+      if (!data || typeof data !== 'object') return;
+      if (data.type !== 'game-state') return;
+      state.mobileEnabled = !!data.mobileEnabled;
+      state.inventoryOpen = !!data.inventoryOpen;
+      state.menuOpen = !!data.menuOpen;
+      state.inventory = Array.isArray(data.inventory) ? data.inventory : [];
+      menuButtons.classList.toggle('open', !!state.menuOpen);
+      renderInventory();
+      if (!state.mobileEnabled) endJoystick();
+    });
+
+    send({ type: 'mobile-ready' });
+  </script>
+</body>
+</html>
