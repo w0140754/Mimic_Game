@@ -82,6 +82,31 @@
     }
     .action-btn:active,
     .action-btn.pressed { transform: scale(0.96); }
+    .menu-buttons {
+      position: fixed;
+      right: 96px;
+      bottom: calc(var(--safe-bottom) + 102px);
+      display: none;
+      gap: 10px;
+      pointer-events: auto;
+    }
+    .menu-buttons.open {
+      display: grid;
+    }
+    .menu-btn {
+      width: 56px;
+      height: 56px;
+      border-radius: 16px;
+      border: 2px solid rgba(255,255,255,0.45);
+      background: rgba(20,20,20,0.42);
+      color: #fff;
+      font-weight: 700;
+      font-size: 24px;
+      line-height: 1;
+      backdrop-filter: blur(3px);
+      box-shadow: 0 8px 20px rgba(0,0,0,0.28);
+      pointer-events: auto;
+    }
     .inventory {
       position: fixed;
       left: calc(30vw + 12px);
@@ -152,6 +177,10 @@
     <div class="hint">Touch left side to move</div>
     <div class="left-zone" id="leftZone"></div>
     <div class="joystick" id="joystick"><div class="joystick-knob" id="joystickKnob"></div></div>
+    <div class="menu-buttons" id="menuButtons">
+      <button class="menu-btn" id="menuUpBtn" type="button" aria-label="Menu up">▲</button>
+      <button class="menu-btn" id="menuDownBtn" type="button" aria-label="Menu down">▼</button>
+    </div>
     <div class="right-buttons">
       <button class="action-btn" id="spaceBtn" type="button">ACT</button>
       <button class="action-btn" id="escapeBtn" type="button">BACK</button>
@@ -166,6 +195,9 @@
     const inventory = document.getElementById('inventory');
     const spaceBtn = document.getElementById('spaceBtn');
     const escapeBtn = document.getElementById('escapeBtn');
+    const menuButtons = document.getElementById('menuButtons');
+    const menuUpBtn = document.getElementById('menuUpBtn');
+    const menuDownBtn = document.getElementById('menuDownBtn');
 
     const state = {
       pointerId: null,
@@ -174,6 +206,7 @@
       radius: 44,
       mobileEnabled: true,
       inventoryOpen: false,
+      menuOpen: false,
       inventory: [],
     };
 
@@ -277,6 +310,8 @@
 
     bindPress(spaceBtn, () => send({ type: 'mobile-space' }), () => send({ type: 'mobile-space-release' }));
     bindPress(escapeBtn, () => send({ type: 'mobile-escape' }));
+    bindPress(menuUpBtn, () => send({ type: 'mobile-menu-up' }));
+    bindPress(menuDownBtn, () => send({ type: 'mobile-menu-down' }));
 
     function renderInventory() {
       inventory.innerHTML = '';
@@ -313,7 +348,9 @@
       if (data.type !== 'game-state') return;
       state.mobileEnabled = !!data.mobileEnabled;
       state.inventoryOpen = !!data.inventoryOpen;
+      state.menuOpen = !!data.menuOpen;
       state.inventory = Array.isArray(data.inventory) ? data.inventory : [];
+      menuButtons.classList.toggle('open', !!state.menuOpen);
       renderInventory();
       if (!state.mobileEnabled) endJoystick();
     });

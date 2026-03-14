@@ -22,6 +22,7 @@
       background: var(--bg);
       color: var(--text);
       font-family: Arial, Helvetica, sans-serif;
+      overflow: hidden;
     }
 
     .wrap {
@@ -149,6 +150,51 @@
       }
     }
 
+    @media (hover: none), (pointer: coarse), (max-width: 900px) {
+      html, body {
+        width: 100%;
+        height: 100%;
+        min-height: 100dvh;
+        overflow: hidden;
+      }
+
+      body {
+        display: block;
+      }
+
+      .wrap {
+        width: 100vw;
+        height: 100dvh;
+        padding: 0;
+        gap: 0;
+      }
+
+      .canvas-shell {
+        width: 100vw;
+        height: 100dvh;
+        display: grid;
+        place-items: center;
+      }
+
+      canvas {
+        width: min(100vw, calc(100dvh * 4 / 3));
+        height: auto;
+        max-width: 100vw;
+        max-height: 100dvh;
+        border: 0;
+      }
+
+      .hud {
+        display: none;
+      }
+
+      .item-bar {
+        top: max(8px, env(safe-area-inset-top));
+        transform: translateX(-50%) scale(0.85);
+        transform-origin: top center;
+      }
+    }
+
   </style>
 </head>
 <body>
@@ -167,7 +213,7 @@
         <div class="item-slot empty"></div>
         <div class="item-slot empty"></div>
       </div>
-      <iframe id="mobileControlsFrame" class="mobile-controls-frame" src="./mobile_controls.html" title="Mobile controls"></iframe>
+      <iframe id="mobileControlsFrame" class="mobile-controls-frame" src="./mobile_controls_v3.html" title="Mobile controls"></iframe>
     </div>
     <div class="hud">
       <div>
@@ -285,12 +331,17 @@ setTurnLabel();
       ];
     }
 
+    function isMobileMenuNavigable() {
+      return !!(player.form === 'chest' && mountedMenu.open && (mountedMenu.mode === 'menu' || mountedMenu.mode === 'ambush_select'));
+    }
+
     function postMobileControlsState() {
       if (!mobileControlsFrame || !mobileControlsFrame.contentWindow) return;
       mobileControlsFrame.contentWindow.postMessage({
         type: 'game-state',
         mobileEnabled: isMobileViewportActive(),
         inventoryOpen: isItemBarOpen(),
+        menuOpen: isMobileMenuNavigable(),
         inventory: getMobileInventoryState(),
       }, '*');
     }
@@ -5398,6 +5449,18 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
     }
 
+    function handleMobileMenuStep(direction) {
+      if ((player.form === 'chest' && (hasChestMoveTarget() || chestPossessTransition.active)) || chestReleaseTransition.active) return;
+      if (!mountedMenu.open) return;
+      if (mountedMenu.mode === 'menu') {
+        moveTurnMenuSelection(direction);
+        return;
+      }
+      if (mountedMenu.mode === 'ambush_select') {
+        moveAmbushMenuSelection(direction);
+      }
+    }
+
     window.addEventListener('message', (event) => {
       const data = event.data || {};
       if (!data || typeof data !== 'object') return;
@@ -5428,6 +5491,15 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (data.type === 'mobile-select-item') {
         if (!isItemBarOpen()) return;
         setHeldTile(data.equip || null);
+        return;
+      }
+      if (data.type === 'mobile-menu-up') {
+        handleMobileMenuStep(-1);
+        return;
+      }
+      if (data.type === 'mobile-menu-down') {
+        handleMobileMenuStep(1);
+        return;
       }
     });
 
