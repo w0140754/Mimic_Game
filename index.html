@@ -2182,7 +2182,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
 	  const screenX = camera.x + cx * TILE_SIZE - TILE_SIZE / 2;
 	  const screenY = camera.y + cy * TILE_SIZE - TILE_SIZE / 2 + PLAYER_DRAW_OFFSET_Y;
 
-	  const drawScale = 0.875;
+	  const drawScale = 1.0
 	  const drawW = Math.floor(TILE_SIZE * drawScale);
 	  const drawH = Math.floor(TILE_SIZE * drawScale);
 	  const drawX = screenX + Math.floor((TILE_SIZE - drawW) / 2);
@@ -4794,7 +4794,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         if (monster.type === 'heroWanderer') {
           if (!loaded.heroWanderer) continue;
 
-          const drawScale = 0.56;
+          const drawScale = 0.75;
           const drawW = Math.floor(TILE_SIZE * drawScale);
           const drawH = Math.floor(TILE_SIZE * drawScale);
           const screenX = Math.floor(camera.x + monster.x * TILE_SIZE - TILE_SIZE / 2);
