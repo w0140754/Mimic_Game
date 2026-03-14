@@ -231,7 +231,7 @@
   <script>
     var TREE_GENERATION_CHUNK_SIZE = 16;
     var TREE_TERRAIN_INVALIDATION_CHANCE = 0.30;
-    const LOOSE_ACORN_MAX_VISIBLE = 2;
+    const LOOSE_ACORN_MAX_VISIBLE = 5;
     const LOOSE_ACORN_DROP_CHANCE = 0.35;
     const FOREST_TREE_MIN_COUNT = 15;
     const canvas = document.getElementById('game');
@@ -3165,6 +3165,19 @@ function drawCollectedAcornEffects(now = performance.now()) {
       return true;
     }
 
+    function cycleMountedTargetSelection(direction) {
+      if (!isMountedMenuActive()) return false;
+      if (mountedMenu.mode !== 'target_select') return false;
+      const validTiles = getHeroActionTargetTiles(mountedMenu.ambushAttack);
+      if (!validTiles.length) return false;
+      const currentIndex = validTiles.findIndex((tile) => tile.x === mountedMenu.targetCursorX && tile.y === mountedMenu.targetCursorY);
+      const startIndex = currentIndex >= 0 ? currentIndex : 0;
+      const nextIndex = (startIndex + direction + validTiles.length) % validTiles.length;
+      mountedMenu.targetCursorX = validTiles[nextIndex].x;
+      mountedMenu.targetCursorY = validTiles[nextIndex].y;
+      return true;
+    }
+
     function resolveMountedBiteTarget(now = performance.now()) {
       if (!isMountedMenuActive()) return false;
       const attack = mountedMenu.ambushAttack;
@@ -5458,6 +5471,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
       if (mountedMenu.mode === 'ambush_select') {
         moveAmbushMenuSelection(direction);
+        return;
+      }
+      if (mountedMenu.mode === 'target_select') {
+        cycleMountedTargetSelection(direction);
       }
     }
 
