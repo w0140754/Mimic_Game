@@ -208,6 +208,7 @@
       inventoryOpen: false,
       menuOpen: false,
       inventory: [],
+      inventorySignature: '',
     };
 
     function send(message) {
@@ -313,9 +314,22 @@
     bindPress(menuUpBtn, () => send({ type: 'mobile-menu-up' }));
     bindPress(menuDownBtn, () => send({ type: 'mobile-menu-down' }));
 
-    function renderInventory() {
-      inventory.innerHTML = '';
+    function getInventorySignature(items) {
+      return JSON.stringify((items || []).map((item) => ({
+        equip: item.equip || '',
+        label: item.label || '',
+        selected: !!item.selected,
+        disabled: !!item.disabled,
+        icon: item.icon || '',
+      })));
+    }
+
+    function renderInventory(force = false) {
       inventory.classList.toggle('open', !!state.inventoryOpen);
+      const nextSignature = getInventorySignature(state.inventory);
+      if (!force && state.inventorySignature === nextSignature) return;
+      state.inventorySignature = nextSignature;
+      inventory.innerHTML = '';
       for (const item of state.inventory || []) {
         const button = document.createElement('button');
         button.type = 'button';
@@ -335,9 +349,16 @@
           span.textContent = item.label || 'Empty';
           button.appendChild(span);
         }
-        button.addEventListener('click', () => {
+        const activate = (event) => {
+          if (button.disabled) {
+            event.preventDefault();
+            return;
+          }
           send({ type: 'mobile-select-item', equip: item.equip || '' });
-        });
+          event.preventDefault();
+        };
+        button.addEventListener('pointerdown', activate, { passive: false });
+        button.addEventListener('click', (event) => event.preventDefault());
         inventory.appendChild(button);
       }
     }
