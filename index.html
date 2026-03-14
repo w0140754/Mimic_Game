@@ -332,7 +332,11 @@ setTurnLabel();
     }
 
     function isMobileMenuNavigable() {
-      return !!(player.form === 'chest' && mountedMenu.open && (mountedMenu.mode === 'menu' || mountedMenu.mode === 'ambush_select'));
+      return !!(player.form === 'chest' && mountedMenu.open && (
+        mountedMenu.mode === 'menu'
+        || mountedMenu.mode === 'ambush_select'
+        || mountedMenu.mode === 'target_select'
+      ));
     }
 
     function postMobileControlsState() {
