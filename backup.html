@@ -128,26 +128,6 @@
       background: rgba(255,255,255,0.08);
     }
 
-
-
-    .mobile-controls-frame {
-      position: fixed;
-      inset: 0;
-      width: 100vw;
-      height: 100vh;
-      border: 0;
-      background: transparent;
-      z-index: 30;
-      display: none;
-      pointer-events: none;
-    }
-
-    @media (hover: none), (pointer: coarse), (max-width: 900px) {
-      .mobile-controls-frame {
-        display: block;
-      }
-    }
-
   </style>
 </head>
 <body>
@@ -166,7 +146,6 @@
         <div class="item-slot empty"></div>
         <div class="item-slot empty"></div>
       </div>
-      <iframe id="mobileControlsFrame" class="mobile-controls-frame" src="./mobile_controls.html" title="Mobile controls" aria-hidden="true"></iframe>
     </div>
     <div class="hud">
       <div>
@@ -267,71 +246,6 @@
 setTurnLabel();
     const itemBar = document.getElementById('itemBar');
     const itemButtons = [...document.querySelectorAll('.item-bar .item-slot[data-equip]')];
-    const mobileControlsFrame = document.getElementById('mobileControlsFrame');
-    const mobileInputState = { up: false, down: false, left: false, right: false };
-
-    function isMobileViewportActive() {
-      return window.matchMedia('(hover: none), (pointer: coarse), (max-width: 900px)').matches;
-    }
-
-    function getMobileInventoryState() {
-      return [
-        { equip: '', label: 'Empty', selected: !player.heldTile, disabled: false, icon: null },
-        { equip: 'dirt', label: 'Dirt', selected: player.heldTile === 'dirt', disabled: false, icon: './tiles/tile_dirt.png' },
-        { equip: 'grass', label: 'Grass', selected: player.heldTile === 'grass', disabled: false, icon: './tiles/tile_grass.png' },
-        { equip: 'water', label: 'Water', selected: player.heldTile === 'water', disabled: false, icon: './tiles/tile_water.png' },
-        { equip: 'acorn', label: `Acorn (${player?.acornCount || 0})`, selected: player.heldTile === 'acorn', disabled: (player?.acornCount || 0) <= 0, icon: './acorn.png' },
-      ];
-    }
-
-    function postMobileControlsState() {
-      if (!mobileControlsFrame || !mobileControlsFrame.contentWindow) return;
-      mobileControlsFrame.contentWindow.postMessage({
-        type: 'game-state',
-        mobileEnabled: isMobileViewportActive(),
-        inventoryOpen: isItemBarOpen(),
-        inventory: getMobileInventoryState(),
-      }, '*');
-    }
-
-    function setMobileMovementState(nextState = {}) {
-      const desired = {
-        up: !!nextState.up,
-        down: !!nextState.down,
-        left: !!nextState.left,
-        right: !!nextState.right,
-      };
-
-      if (player.form === 'chest') {
-        const vertical = (desired.down ? 1 : 0) - (desired.up ? 1 : 0);
-        const horizontal = (desired.right ? 1 : 0) - (desired.left ? 1 : 0);
-        if (Math.abs(horizontal) >= Math.abs(vertical)) {
-          desired.up = false;
-          desired.down = false;
-          if (horizontal > 0) { desired.right = true; desired.left = false; }
-          else if (horizontal < 0) { desired.left = true; desired.right = false; }
-          else { desired.left = false; desired.right = false; }
-        } else {
-          desired.left = false;
-          desired.right = false;
-          if (vertical > 0) { desired.down = true; desired.up = false; }
-          else if (vertical < 0) { desired.up = true; desired.down = false; }
-          else { desired.up = false; desired.down = false; }
-        }
-      }
-
-      const keyMap = { up: 'arrowup', down: 'arrowdown', left: 'arrowleft', right: 'arrowright' };
-      for (const dir of ['up', 'down', 'left', 'right']) {
-        if (mobileInputState[dir] === desired[dir]) continue;
-        mobileInputState[dir] = desired[dir];
-        setMovementKey(keyMap[dir], desired[dir]);
-      }
-    }
-
-    function clearMobileMovementState() {
-      setMobileMovementState({ up: false, down: false, left: false, right: false });
-    }
-
 
     const TILE_SIZE = 64;
     const EDGE_HEIGHT = 32;
@@ -1104,7 +1018,6 @@ setTurnLabel();
         }
       });
       updateAcornCountLabel();
-      postMobileControlsState();
     }
 
     function getTilePlacementProgress(tileKey, now) {
@@ -5334,102 +5247,6 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
     }
 
-    function handleMobileEscape() {
-      if ((player.form === 'chest' && (hasChestMoveTarget() || chestPossessTransition.active)) || chestReleaseTransition.active) return;
-      if (isHeroEngagementActive() && player.form === 'chest' && heroEngagement.turn !== 'player') return;
-
-      if (player.form === 'chest' && mountedMenu.open) {
-        if (mountedMenu.mode === 'ambush_select') {
-          openMountedActionMenu();
-          return;
-        }
-        if (mountedMenu.mode === 'target_select') {
-          beginMountedAmbushMenu();
-          return;
-        }
-        if (mountedMenu.mode === 'menu') {
-          if (!isChestHidden()) closeMountedActionMenu();
-          return;
-        }
-      }
-
-      clearRecallCharge();
-    }
-
-    function handleMobileSpace() {
-      if ((player.form === 'chest' && (hasChestMoveTarget() || chestPossessTransition.active)) || chestReleaseTransition.active) return;
-      if (player.form === 'chest') {
-        if (isHeroEngagementActive() && heroEngagement.turn !== 'player') return;
-        if (mountedMenu.open) {
-          if (mountedMenu.mode === 'menu') { confirmTurnMenuSelection(performance.now()); return; }
-          if (mountedMenu.mode === 'ambush_select') { confirmMountedAmbushSelection(performance.now()); return; }
-          if (mountedMenu.mode === 'target_select') { confirmMountedTargetSelection(); return; }
-          if (mountedMenu.mode === 'ambush_roll' && !mountedMenu.ambushDieRolling) { startMountedAmbushRoll(performance.now()); return; }
-          if (mountedMenu.mode === 'ambush_result') { finalizeMountedAmbushOutcome(performance.now()); return; }
-        }
-        openMountedActionMenu();
-        return;
-      }
-
-      if (player.form === 'shadow') {
-        const now = performance.now();
-        const interactionTarget = getCurrentInteractionTarget();
-        if (interactionTarget) {
-          clearSelectedTree();
-          if (interactionTarget.type === 'chest') { mountChest(); return; }
-          if (interactionTarget.type === 'monster') { tryInteractWithMonster(); return; }
-          if (interactionTarget.type === 'pickupAcorn') { collectLooseAcornAt(interactionTarget.x, interactionTarget.y, now); return; }
-          if (interactionTarget.type === 'acorn') { plantAcornAt(interactionTarget.x, interactionTarget.y, now); return; }
-          if (interactionTarget.type === 'tile') { placeHeldTile(); return; }
-        }
-
-        const facingTree = getFacingTreeTarget(now);
-        if (facingTree) {
-          if (player.selectedTreeKey === facingTree.key) chopTreeAt(facingTree.x, facingTree.y, now);
-          else player.selectedTreeKey = facingTree.key;
-          render(now);
-          return;
-        }
-
-        clearSelectedTree();
-        input.space = true;
-        player.ghostChargeStartAt = now;
-      }
-    }
-
-    window.addEventListener('message', (event) => {
-      const data = event.data || {};
-      if (!data || typeof data !== 'object') return;
-      if (data.type === 'mobile-ready') {
-        postMobileControlsState();
-        return;
-      }
-      if (data.type === 'mobile-move') {
-        setMobileMovementState(data);
-        return;
-      }
-      if (data.type === 'mobile-clear-move') {
-        clearMobileMovementState();
-        return;
-      }
-      if (data.type === 'mobile-space') {
-        handleMobileSpace();
-        return;
-      }
-      if (data.type === 'mobile-space-release') {
-        clearRecallCharge();
-        return;
-      }
-      if (data.type === 'mobile-escape') {
-        handleMobileEscape();
-        return;
-      }
-      if (data.type === 'mobile-select-item') {
-        if (!isItemBarOpen()) return;
-        setHeldTile(data.equip || null);
-      }
-    });
-
     window.addEventListener('keydown', (e) => {
       const key = e.key.toLowerCase();
       const movementKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'];
@@ -5592,17 +5409,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       movementReleaseGate.left = false;
       movementReleaseGate.right = false;
       clearRecallCharge();
-      clearMobileMovementState();
-      postMobileControlsState();
     });
-
-    window.addEventListener('resize', postMobileControlsState);
-    window.addEventListener('orientationchange', postMobileControlsState);
-    if (mobileControlsFrame) {
-      mobileControlsFrame.addEventListener('load', () => {
-        postMobileControlsState();
-      });
-    }
 
     let lastTime = performance.now();
 
