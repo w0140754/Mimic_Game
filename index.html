@@ -327,7 +327,7 @@ setTurnLabel();
         { equip: 'dirt', label: 'Dirt', selected: player.heldTile === 'dirt', disabled: false, icon: './tiles/tile_dirt.png' },
         { equip: 'grass', label: 'Grass', selected: player.heldTile === 'grass', disabled: false, icon: './tiles/tile_grass.png' },
         { equip: 'water', label: 'Water', selected: player.heldTile === 'water', disabled: false, icon: './tiles/tile_water.png' },
-        { equip: 'acorn', label: `Acorn (${player?.acornCount || 0})`, selected: player.heldTile === 'acorn', disabled: (player?.acornCount || 0) <= 0, icon: './acorn.png' },
+        ...((player?.acornCount || 0) > 0 ? [{ equip: 'acorn', label: `Acorn (${player?.acornCount || 0})`, selected: player.heldTile === 'acorn', disabled: false, icon: './acorn.png' }] : []),
       ];
     }
 
@@ -1152,11 +1152,14 @@ setTurnLabel();
       itemButtons.forEach((btn) => {
         const equip = btn.dataset.equip || null;
         const unavailable = equip === 'acorn' && (player.acornCount || 0) <= 0;
+        const hidden = equip === 'acorn' && (player.acornCount || 0) <= 0;
         btn.classList.toggle('selected', equip === (player.heldTile || null));
         btn.classList.toggle('disabled', unavailable);
         btn.disabled = unavailable;
+        btn.hidden = hidden;
+        btn.style.display = hidden ? 'none' : '';
         if (equip === 'acorn') {
-          btn.title = unavailable ? 'No acorns' : `Acorns: ${player.acornCount || 0}`;
+          btn.title = hidden ? '' : `Acorns: ${player.acornCount || 0}`;
         }
       });
       updateAcornCountLabel();
