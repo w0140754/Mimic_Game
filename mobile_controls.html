@@ -245,6 +245,19 @@
       endJoystick();
     });
 
+
+    window.addEventListener('pointerup', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      endJoystick();
+      event.preventDefault();
+    }, { passive: false });
+
+    window.addEventListener('pointercancel', (event) => {
+      if (event.pointerId !== state.pointerId) return;
+      endJoystick();
+      event.preventDefault();
+    }, { passive: false });
+
     function bindPress(button, onPress, onRelease) {
       const press = (event) => {
         button.classList.add('pressed');
