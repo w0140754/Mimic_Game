@@ -352,6 +352,7 @@
       if (tileAt(tileX, tileY) !== 'dirt') return false;
       if (stoneState.has(key)) return false;
       if (treeState.has(key) || removingTrees.has(key)) return false;
+      if (removingStones.has(key)) return false;
       if (plantedAcorns.has(key) || looseAcorns.has(key)) return false;
       if (isTileOccupiedByActor(tileX, tileY)) return false;
       return true;
@@ -513,6 +514,7 @@ setTurnLabel();
     const treeState = new Map();
     const choppedTrees = new Map();
     const removingTrees = new Map();
+    const removingStones = new Map();
     const tilePlacementState = new Map();
     const plantedAcorns = new Map();
     const looseAcorns = new Map();
@@ -1007,7 +1009,7 @@ setTurnLabel();
     function getDestructibleTypeAt(tileX, tileY, now = performance.now()) {
       const key = keyOf(tileX, tileY);
       if (getActiveTreeTiles(now).has(key)) return 'tree';
-      if (stoneState.has(key)) return 'stone';
+      if (stoneState.has(key) || removingStones.has(key)) return 'stone';
       return null;
     }
 
@@ -1552,57 +1554,99 @@ setTurnLabel();
       };
     }
 
-    function getStoneRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), now = performance.now()) {
+    function getStoneFadeProgress(tileKey, now) {
+      const state = removingStones.get(tileKey);
+      if (!state) return 1;
+      return Math.max(0, Math.min(1, 1 - ((now - (state.startedAt || 0)) / TREE_FADE_MS)));
+    }
+
+    function getStoneRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), now = performance.now(), mode = 'normal') {
       const screenX = camera.x + tileX * TILE_SIZE;
       const screenY = camera.y + tileY * TILE_SIZE;
-      const info = stoneState.get(key);
+      const info = stoneState.get(key) || removingStones.get(key);
       const variant = info?.variant || (treeScore(tileX + 91, tileY - 37) < 0.5 ? 'a' : 'b');
       const stoneAsset = getStoneAssetForVariant(variant);
       const baseW = stoneAsset ? stoneAsset.width : 36;
       const baseH = stoneAsset ? stoneAsset.height : 36;
       const anim = getStoneAnimState(progress);
-      const drawW = Math.max(1, Math.round(baseW * anim.scaleX));
-      const drawH = Math.max(1, Math.round(baseH * anim.scaleY));
+      let alpha = anim.alpha;
+      let scaleX = anim.scaleX;
+      let scaleY = anim.scaleY;
+      let yOffset = anim.yOffset;
+
+      if (mode === 'fade') {
+        const fade = getStoneFadeProgress(key, now);
+        alpha *= fade;
+        scaleX *= 1 - (1 - fade) * 0.06;
+        scaleY *= 1 - (1 - fade) * 0.06;
+        yOffset -= Math.round((1 - fade) * 8);
+      }
+
+      const drawW = Math.max(1, Math.round(baseW * scaleX));
+      const drawH = Math.max(1, Math.round(baseH * scaleY));
       const drawX = Math.floor(screenX + (TILE_SIZE - drawW) / 2);
-      const drawY = Math.floor(screenY + TILE_SIZE - drawH + anim.yOffset);
-      return { screenX, screenY, stoneAsset, drawW, drawH, drawX, drawY, alpha: anim.alpha };
+      const drawY = Math.floor(screenY + TILE_SIZE - drawH + yOffset);
+      return { screenX, screenY, stoneAsset, drawW, drawH, drawX, drawY, alpha };
     }
 
-    function removeStoneAt(x, y) {
+    function removeStoneAt(x, y, now = performance.now()) {
       const key = keyOf(x, y);
+      const info = stoneState.get(key);
+      if (!info) return false;
+      removingStones.set(key, { startedAt: now, variant: info.variant || 'a' });
+      stoneState.delete(key);
       clearDestructibleHp(key);
       if (player.selectedDestructibleKey === key) clearSelectedTree();
-      return stoneState.delete(key);
+      return true;
+    }
+
+    function removeStoneImmediately(x, y) {
+      const key = keyOf(x, y);
+      let removed = false;
+      if (stoneState.delete(key)) removed = true;
+      if (removingStones.delete(key)) removed = true;
+      clearDestructibleHp(key);
+      if (player.selectedDestructibleKey === key) clearSelectedTree();
+      return removed;
+    }
+
+    function drawStoneSprite(info) {
+      ctx.save();
+      ctx.globalAlpha = info.alpha;
+
+      if (info.stoneAsset) {
+        ctx.drawImage(info.stoneAsset, info.drawX, info.drawY, info.drawW, info.drawH);
+      } else {
+        ctx.fillStyle = '#8a8a8a';
+        ctx.beginPath();
+        ctx.moveTo(info.drawX + Math.round(info.drawW * 0.2), info.drawY + info.drawH);
+        ctx.lineTo(info.drawX + Math.round(info.drawW * 0.03), info.drawY + Math.round(info.drawH * 0.39));
+        ctx.lineTo(info.drawX + Math.round(info.drawW * 0.39), info.drawY + Math.round(info.drawH * 0.06));
+        ctx.lineTo(info.drawX + Math.round(info.drawW * 0.78), info.drawY + Math.round(info.drawH * 0.14));
+        ctx.lineTo(info.drawX + info.drawW - 1, info.drawY + Math.round(info.drawH * 0.44));
+        ctx.lineTo(info.drawX + info.drawW - Math.round(info.drawW * 0.17), info.drawY + info.drawH);
+        ctx.closePath();
+        ctx.fill();
+      }
+
+      ctx.restore();
     }
 
     function drawStones(bounds, now = performance.now()) {
-      if (!stoneState.size) return;
+      if (!stoneState.size && !removingStones.size) return;
 
       for (const [key] of stoneState.entries()) {
         const [x, y] = key.split(',').map(Number);
         if (!isWithinBounds(x, y, bounds)) continue;
+        const info = getStoneRenderInfo(x, y, getStoneAnimationProgress(key, now), key, now, 'normal');
+        drawStoneSprite(info);
+      }
 
-        const info = getStoneRenderInfo(x, y, getStoneAnimationProgress(key, now), key, now);
-
-        ctx.save();
-        ctx.globalAlpha = info.alpha;
-
-        if (info.stoneAsset) {
-          ctx.drawImage(info.stoneAsset, info.drawX, info.drawY, info.drawW, info.drawH);
-        } else {
-          ctx.fillStyle = '#8a8a8a';
-          ctx.beginPath();
-          ctx.moveTo(info.drawX + Math.round(info.drawW * 0.2), info.drawY + info.drawH);
-          ctx.lineTo(info.drawX + Math.round(info.drawW * 0.03), info.drawY + Math.round(info.drawH * 0.39));
-          ctx.lineTo(info.drawX + Math.round(info.drawW * 0.39), info.drawY + Math.round(info.drawH * 0.06));
-          ctx.lineTo(info.drawX + Math.round(info.drawW * 0.78), info.drawY + Math.round(info.drawH * 0.14));
-          ctx.lineTo(info.drawX + info.drawW - 1, info.drawY + Math.round(info.drawH * 0.44));
-          ctx.lineTo(info.drawX + info.drawW - Math.round(info.drawW * 0.17), info.drawY + info.drawH);
-          ctx.closePath();
-          ctx.fill();
-        }
-
-        ctx.restore();
+      for (const [key] of removingStones.entries()) {
+        const [x, y] = key.split(',').map(Number);
+        if (!isWithinBounds(x, y, bounds)) continue;
+        const info = getStoneRenderInfo(x, y, 1, key, now, 'fade');
+        drawStoneSprite(info);
       }
     }
 
@@ -2095,6 +2139,12 @@ function drawCollectedAcornEffects(now = performance.now()) {
           removingTrees.delete(key);
         }
       }
+      for (const [key] of removingStones) {
+        const [x, y] = key.split(',').map(Number);
+        if (Math.abs(x - playerTile.x) <= areaPad && Math.abs(y - playerTile.y) <= areaPad) {
+          removingStones.delete(key);
+        }
+      }
 
       const selectedKeys = new Set();
       function debugForestHash(x, y) {
@@ -2248,7 +2298,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         return { baseScreenX: info.baseScreenX, baseScreenY: info.baseScreenY };
       }
       if (target.type === 'stone') {
-        const info = getStoneRenderInfo(target.x, target.y, getStoneAnimationProgress(target.key, now), target.key, now);
+        const info = getStoneRenderInfo(target.x, target.y, getStoneAnimationProgress(target.key, now), target.key, now, 'normal');
         return { baseScreenX: info.screenX, baseScreenY: info.screenY };
       }
       return null;
@@ -2282,6 +2332,11 @@ function drawCollectedAcornEffects(now = performance.now()) {
       for (const [key, state] of [...removingTrees.entries()]) {
         if (now - state.startedAt >= TREE_FADE_MS) {
           removingTrees.delete(key);
+        }
+      }
+      for (const [key, state] of [...removingStones.entries()]) {
+        if (now - state.startedAt >= TREE_FADE_MS) {
+          removingStones.delete(key);
         }
       }
     }
@@ -5417,7 +5472,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (tile === 'water') return false;
       const tileKey = keyOf(tx, ty);
       if (!ignoreTrees && getActiveTreeTiles(performance.now()).has(tileKey)) return false;
-      if (stoneState.has(tileKey)) return false;
+      if (stoneState.has(tileKey) || removingStones.has(tileKey)) return false;
       return true;
     }
 
