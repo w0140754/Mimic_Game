@@ -517,6 +517,11 @@ setTurnLabel();
     const plantedAcorns = new Map();
     const looseAcorns = new Map();
     const stoneState = new Map();
+    const destructibleObjectHp = new Map();
+    const DESTRUCTIBLE_OBJECT_TYPES = {
+      tree: { maxHp: 3, label: 'Remove' },
+      stone: { maxHp: 6, label: 'Remove' },
+    };
     const collectedAcornEffects = new Map();
 
     const movementReleaseGate = { up: false, down: false, left: false, right: false };
@@ -669,7 +674,7 @@ setTurnLabel();
       moving: false,
       animTime: 0,
       ghostChargeStartAt: null,
-      selectedTreeKey: null,
+      selectedDestructibleKey: null,
       acornCount: 0,
       chestMoveTargetX: null,
       chestMoveTargetY: null,
@@ -999,37 +1004,100 @@ setTurnLabel();
       return active;
     }
 
-    function isFacingTree(now = performance.now()) {
+    function getDestructibleTypeAt(tileX, tileY, now = performance.now()) {
+      const key = keyOf(tileX, tileY);
+      if (getActiveTreeTiles(now).has(key)) return 'tree';
+      if (stoneState.has(key)) return 'stone';
+      return null;
+    }
+
+    function getDestructibleTargetAt(tileX, tileY, now = performance.now()) {
+      const type = getDestructibleTypeAt(tileX, tileY, now);
+      if (!type) return null;
+      return { x: tileX, y: tileY, key: keyOf(tileX, tileY), type };
+    }
+
+    function getFacingDestructibleTarget(now = performance.now()) {
+      if (player.form !== 'shadow') return null;
       const target = getFacingTile();
-      return getActiveTreeTiles(now).has(keyOf(target.x, target.y));
+      return getDestructibleTargetAt(target.x, target.y, now);
+    }
+
+    function getDestructibleDefinition(type) {
+      return DESTRUCTIBLE_OBJECT_TYPES[type] || { maxHp: 1, label: 'Remove' };
+    }
+
+    function getDestructibleHp(tileKey, type) {
+      const stored = destructibleObjectHp.get(tileKey);
+      if (stored && stored.type === type && Number.isFinite(stored.hp)) return stored.hp;
+      return getDestructibleDefinition(type).maxHp;
+    }
+
+    function setDestructibleHp(tileKey, type, hp) {
+      const maxHp = getDestructibleDefinition(type).maxHp;
+      const nextHp = Math.max(0, Math.min(maxHp, hp));
+      if (nextHp >= maxHp) {
+        destructibleObjectHp.delete(tileKey);
+        return maxHp;
+      }
+      destructibleObjectHp.set(tileKey, { type, hp: nextHp });
+      return nextHp;
+    }
+
+    function clearDestructibleHp(tileKey) {
+      destructibleObjectHp.delete(tileKey);
+    }
+
+    function destroyDestructibleAt(x, y, type = null, now = performance.now()) {
+      const key = keyOf(x, y);
+      const resolvedType = type || getDestructibleTypeAt(x, y, now);
+      if (!resolvedType) return false;
+      clearDestructibleHp(key);
+      if (resolvedType === 'tree') return chopTreeAt(x, y, now);
+      if (resolvedType === 'stone') return removeStoneAt(x, y);
+      return false;
+    }
+
+    function applyDamageToDestructibleAt(x, y, damage = 1, now = performance.now()) {
+      const target = getDestructibleTargetAt(x, y, now);
+      if (!target) return null;
+      const nextHp = setDestructibleHp(target.key, target.type, getDestructibleHp(target.key, target.type) - damage);
+      let destroyed = false;
+      if (nextHp <= 0) {
+        destroyed = destroyDestructibleAt(x, y, target.type, now);
+      }
+      return { ...target, damage, remainingHp: Math.max(0, nextHp), destroyed };
+    }
+
+    function isFacingTree(now = performance.now()) {
+      const target = getFacingDestructibleTarget(now);
+      return !!(target && target.type === 'tree');
     }
 
     function getFacingTreeTarget(now = performance.now()) {
-      if (player.form !== 'shadow') return null;
-      const target = getFacingTile();
-      const key = keyOf(target.x, target.y);
-      if (!getActiveTreeTiles(now).has(key)) return null;
-      return { x: target.x, y: target.y, key };
+      const target = getFacingDestructibleTarget(now);
+      return target && target.type === 'tree' ? target : null;
     }
 
     function clearSelectedTree() {
-      player.selectedTreeKey = null;
+      player.selectedDestructibleKey = null;
     }
 
     function refreshSelectedTree(now = performance.now()) {
-      if (!player.selectedTreeKey) return;
-      const facingTree = getFacingTreeTarget(now);
-      if (!facingTree || facingTree.key !== player.selectedTreeKey) {
+      if (!player.selectedDestructibleKey) return;
+      const facingTarget = getFacingDestructibleTarget(now);
+      if (!facingTarget || facingTarget.key !== player.selectedDestructibleKey) {
         clearSelectedTree();
       }
     }
 
     function chopTreeAt(x, y, now = performance.now()) {
-      const environmentNow = getEnvironmentNow(now);
       const key = keyOf(x, y);
-      removingTrees.set(key, { startedAt: environmentNow, variant: treeState.get(key)?.variant || chooseTreeVariant() });
+      removingTrees.set(key, { startedAt: now, variant: treeState.get(key)?.variant || chooseTreeVariant() });
       treeState.delete(key);
-      if (player.selectedTreeKey === key) clearSelectedTree();
+      if (pausedTreeTiles) pausedTreeTiles.delete(key);
+      clearDestructibleHp(key);
+      if (player.selectedDestructibleKey === key) clearSelectedTree();
       return true;
     }
 
@@ -1039,7 +1107,8 @@ setTurnLabel();
       if (treeState.delete(key)) removed = true;
       if (removingTrees.delete(key)) removed = true;
       if (pausedTreeTiles && pausedTreeTiles.delete(key)) removed = true;
-      if (player.selectedTreeKey === key) clearSelectedTree();
+      clearDestructibleHp(key);
+      if (player.selectedDestructibleKey === key) clearSelectedTree();
       return removed;
     }
 
@@ -1073,6 +1142,7 @@ setTurnLabel();
       if (hasPlantedAcornAt(target.x, target.y)) return null;
       // Don't allow planting where a tree currently exists.
       if (getActiveTreeTiles(now).has(keyOf(target.x, target.y))) return null;
+      if (stoneState.has(keyOf(target.x, target.y))) return null;
       return { x: target.x, y: target.y };
     }
 
@@ -1246,10 +1316,9 @@ setTurnLabel();
 
     function tryChopTree(now = performance.now()) {
       if (player.form !== 'shadow') return false;
-      const target = getFacingTile();
-      const key = keyOf(target.x, target.y);
-      if (!getActiveTreeTiles(now).has(key)) return false;
-      chopTreeAt(target.x, target.y, now);
+      const target = getFacingDestructibleTarget(now);
+      if (!target) return false;
+      destroyDestructibleAt(target.x, target.y, target.type, now);
       render(now);
       return true;
     }
@@ -1483,39 +1552,52 @@ setTurnLabel();
       };
     }
 
+    function getStoneRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), now = performance.now()) {
+      const screenX = camera.x + tileX * TILE_SIZE;
+      const screenY = camera.y + tileY * TILE_SIZE;
+      const info = stoneState.get(key);
+      const variant = info?.variant || (treeScore(tileX + 91, tileY - 37) < 0.5 ? 'a' : 'b');
+      const stoneAsset = getStoneAssetForVariant(variant);
+      const baseW = stoneAsset ? stoneAsset.width : 36;
+      const baseH = stoneAsset ? stoneAsset.height : 36;
+      const anim = getStoneAnimState(progress);
+      const drawW = Math.max(1, Math.round(baseW * anim.scaleX));
+      const drawH = Math.max(1, Math.round(baseH * anim.scaleY));
+      const drawX = Math.floor(screenX + (TILE_SIZE - drawW) / 2);
+      const drawY = Math.floor(screenY + TILE_SIZE - drawH + anim.yOffset);
+      return { screenX, screenY, stoneAsset, drawW, drawH, drawX, drawY, alpha: anim.alpha };
+    }
+
+    function removeStoneAt(x, y) {
+      const key = keyOf(x, y);
+      clearDestructibleHp(key);
+      if (player.selectedDestructibleKey === key) clearSelectedTree();
+      return stoneState.delete(key);
+    }
+
     function drawStones(bounds, now = performance.now()) {
       if (!stoneState.size) return;
 
-      for (const [key, info] of stoneState.entries()) {
+      for (const [key] of stoneState.entries()) {
         const [x, y] = key.split(',').map(Number);
         if (!isWithinBounds(x, y, bounds)) continue;
 
-        const screenX = camera.x + x * TILE_SIZE;
-        const screenY = camera.y + y * TILE_SIZE;
-        const variant = info?.variant || (treeScore(x + 91, y - 37) < 0.5 ? 'a' : 'b');
-        const stoneAsset = getStoneAssetForVariant(variant);
-        const baseW = stoneAsset ? stoneAsset.width : 36;
-        const baseH = stoneAsset ? stoneAsset.height : 36;
-        const anim = getStoneAnimState(getStoneAnimationProgress(key, now));
-        const drawW = Math.max(1, Math.round(baseW * anim.scaleX));
-        const drawH = Math.max(1, Math.round(baseH * anim.scaleY));
-        const drawX = Math.floor(screenX + (TILE_SIZE - drawW) / 2);
-        const drawY = Math.floor(screenY + TILE_SIZE - drawH + anim.yOffset);
+        const info = getStoneRenderInfo(x, y, getStoneAnimationProgress(key, now), key, now);
 
         ctx.save();
-        ctx.globalAlpha = anim.alpha;
+        ctx.globalAlpha = info.alpha;
 
-        if (stoneAsset) {
-          ctx.drawImage(stoneAsset, drawX, drawY, drawW, drawH);
+        if (info.stoneAsset) {
+          ctx.drawImage(info.stoneAsset, info.drawX, info.drawY, info.drawW, info.drawH);
         } else {
           ctx.fillStyle = '#8a8a8a';
           ctx.beginPath();
-          ctx.moveTo(drawX + Math.round(drawW * 0.2), drawY + drawH);
-          ctx.lineTo(drawX + Math.round(drawW * 0.03), drawY + Math.round(drawH * 0.39));
-          ctx.lineTo(drawX + Math.round(drawW * 0.39), drawY + Math.round(drawH * 0.06));
-          ctx.lineTo(drawX + Math.round(drawW * 0.78), drawY + Math.round(drawH * 0.14));
-          ctx.lineTo(drawX + drawW - 1, drawY + Math.round(drawH * 0.44));
-          ctx.lineTo(drawX + drawW - Math.round(drawW * 0.17), drawY + drawH);
+          ctx.moveTo(info.drawX + Math.round(info.drawW * 0.2), info.drawY + info.drawH);
+          ctx.lineTo(info.drawX + Math.round(info.drawW * 0.03), info.drawY + Math.round(info.drawH * 0.39));
+          ctx.lineTo(info.drawX + Math.round(info.drawW * 0.39), info.drawY + Math.round(info.drawH * 0.06));
+          ctx.lineTo(info.drawX + Math.round(info.drawW * 0.78), info.drawY + Math.round(info.drawH * 0.14));
+          ctx.lineTo(info.drawX + info.drawW - 1, info.drawY + Math.round(info.drawH * 0.44));
+          ctx.lineTo(info.drawX + info.drawW - Math.round(info.drawW * 0.17), info.drawY + info.drawH);
           ctx.closePath();
           ctx.fill();
         }
@@ -2159,11 +2241,25 @@ function drawCollectedAcornEffects(now = performance.now()) {
       drawTreeLayerAtTile(tileX, tileY, progress, 'top', mode, now);
     }
 
+    function getDestructibleRenderInfo(target, now = performance.now()) {
+      if (!target) return null;
+      if (target.type === 'tree') {
+        const info = getTreeRenderInfo(target.x, target.y, getTreeAnimationProgress(target.key, now), target.key, 'normal', now);
+        return { baseScreenX: info.baseScreenX, baseScreenY: info.baseScreenY };
+      }
+      if (target.type === 'stone') {
+        const info = getStoneRenderInfo(target.x, target.y, getStoneAnimationProgress(target.key, now), target.key, now);
+        return { baseScreenX: info.screenX, baseScreenY: info.screenY };
+      }
+      return null;
+    }
+
     function drawSelectedTreePrompt(now = performance.now()) {
-      if (!player.selectedTreeKey) return;
-      const target = getFacingTreeTarget(now);
-      if (!target || target.key !== player.selectedTreeKey) return;
-      const info = getTreeRenderInfo(target.x, target.y, getTreeAnimationProgress(target.key, now), target.key, 'normal', now);
+      if (!player.selectedDestructibleKey) return;
+      const target = getFacingDestructibleTarget(now);
+      if (!target || target.key !== player.selectedDestructibleKey) return;
+      const info = getDestructibleRenderInfo(target, now);
+      if (!info) return;
       const boxW = 58;
       const boxH = 20;
       const boxX = info.baseScreenX + Math.round((TILE_SIZE - boxW) / 2);
@@ -2178,7 +2274,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       ctx.font = '12px Arial';
       ctx.textAlign = 'center';
       ctx.textBaseline = 'middle';
-      ctx.fillText('Remove', boxX + boxW / 2, boxY + boxH / 2 + 0.5);
+      ctx.fillText(getDestructibleDefinition(target.type).label, boxX + boxW / 2, boxY + boxH / 2 + 0.5);
       ctx.restore();
     }
 
@@ -2368,16 +2464,16 @@ function drawCollectedAcornEffects(now = performance.now()) {
 	    return true;
 	  }
 
-	  if (effect.kind === 'tree') {
+	  if (effect.kind === 'tree' || effect.kind === 'stone') {
+	    const result = applyDamageToDestructibleAt(effect.targetX, effect.targetY, effect.totalDamage, now);
 	    spawnFloatingText(`-${effect.totalDamage}`, effect.targetX, effect.targetY, now, {
 	      color: '#ffdf7a',
 	      outline: 'rgba(55, 0, 0, 0.85)',
 	      size: 22,
 	      rise: 24,
 	    });
-	    removeTreeImmediately(effect.targetX, effect.targetY);
-	    mountedMenu.ambushOutcome = 'tree';
-	    return true;
+	    mountedMenu.ambushOutcome = effect.kind;
+	    return !!result;
 	  }
 
 	  spawnFloatingText('MISS', effect.targetX, effect.targetY, now, {
@@ -3475,13 +3571,13 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const hero = monsters.find((monster) => monster.type === 'heroWanderer' && Math.floor(monster.x) === targetX && Math.floor(monster.y) === targetY) || null;
       const totalDamage = hero ? getHeroAttackDamage(attack, targetX, targetY, hero) : attack.baseDamage;
       const hitHero = !!hero;
-      const hitTree = !hitHero && treeState.has(targetKey);
+      const hitObjectType = !hitHero ? getDestructibleTypeAt(targetX, targetY, now) : null;
 
       let pendingEffect = { kind: 'miss', targetX, targetY, totalDamage };
       if (hitHero) {
         pendingEffect = { kind: 'hero', hero, targetX, targetY, totalDamage };
-      } else if (hitTree) {
-        pendingEffect = { kind: 'tree', targetX, targetY, totalDamage };
+      } else if (hitObjectType) {
+        pendingEffect = { kind: hitObjectType, targetX, targetY, totalDamage };
       }
 
       startChestBiteAnimation(player.x, player.y, now, pendingEffect);
@@ -4965,10 +5061,11 @@ function drawCollectedAcornEffects(now = performance.now()) {
     }
 
     function drawSelectedTreeHighlight(now = performance.now()) {
-      if (!player.selectedTreeKey) return;
-      const target = getFacingTreeTarget(now);
-      if (!target || target.key !== player.selectedTreeKey) return;
-      const info = getTreeRenderInfo(target.x, target.y, getTreeAnimationProgress(target.key, now), target.key, 'normal', now);
+      if (!player.selectedDestructibleKey) return;
+      const target = getFacingDestructibleTarget(now);
+      if (!target || target.key !== player.selectedDestructibleKey) return;
+      const info = getDestructibleRenderInfo(target, now);
+      if (!info) return;
       const boxX = info.baseScreenX + 10;
       const boxY = info.baseScreenY + 10;
       const boxW = TILE_SIZE - 20;
@@ -5215,7 +5312,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
     function render(now = performance.now()) {
       const environmentNow = getEnvironmentNow(now);
       updateCamera();
-      updateRemovingTrees(environmentNow);
+      updateRemovingTrees(now);
       refreshSelectedTree(environmentNow);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawVoidBackground(now);
@@ -5246,7 +5343,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
           if (treeTiles.has(tileKey)) {
             drawTreeBottomAtTile(x, y, getTreeAnimationProgress(tileKey, environmentNow), 'normal', environmentNow);
           } else if (removingTrees.has(tileKey)) {
-            drawTreeBottomAtTile(x, y, 1, 'fade', environmentNow);
+            drawTreeBottomAtTile(x, y, 1, 'fade', now);
           }
         }
       }
@@ -5285,7 +5382,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
           if (treeTiles.has(tileKey)) {
             drawTreeTopAtTile(x, y, getTreeAnimationProgress(tileKey, environmentNow), 'normal', environmentNow);
           } else if (removingTrees.has(tileKey)) {
-            drawTreeTopAtTile(x, y, 1, 'fade', environmentNow);
+            drawTreeTopAtTile(x, y, 1, 'fade', now);
           }
         }
       }
@@ -5738,10 +5835,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
           if (interactionTarget.type === 'tile') { placeHeldTile(); return; }
         }
 
-        const facingTree = getFacingTreeTarget(now);
-        if (facingTree) {
-          if (player.selectedTreeKey === facingTree.key) chopTreeAt(facingTree.x, facingTree.y, now);
-          else player.selectedTreeKey = facingTree.key;
+        const facingObject = getFacingDestructibleTarget(now);
+        if (facingObject) {
+          if (player.selectedDestructibleKey === facingObject.key) destroyDestructibleAt(facingObject.x, facingObject.y, facingObject.type, now);
+          else player.selectedDestructibleKey = facingObject.key;
           render(now);
           return;
         }
@@ -5928,12 +6025,12 @@ function drawCollectedAcornEffects(now = performance.now()) {
             }
           }
 
-          const facingTree = getFacingTreeTarget(now);
-          if (facingTree) {
-            if (player.selectedTreeKey === facingTree.key) {
-              chopTreeAt(facingTree.x, facingTree.y, now);
+          const facingObject = getFacingDestructibleTarget(now);
+          if (facingObject) {
+            if (player.selectedDestructibleKey === facingObject.key) {
+              destroyDestructibleAt(facingObject.x, facingObject.y, facingObject.type, now);
             } else {
-              player.selectedTreeKey = facingTree.key;
+              player.selectedDestructibleKey = facingObject.key;
             }
             render(now);
             return;
