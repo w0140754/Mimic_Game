@@ -76,6 +76,32 @@
       font-size: 14px;
     }
 
+    .hud-debug {
+      width: 100%;
+      display: none;
+      flex-direction: column;
+      gap: 6px;
+      padding-top: 4px;
+      border-top: 1px solid #2c2c2c;
+      font-size: 13px;
+      color: var(--muted);
+    }
+
+    .hud-debug.visible {
+      display: flex;
+    }
+
+    .hud-debug-title {
+      color: var(--text);
+      font-weight: 700;
+    }
+
+    .hud-debug-entry {
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
     .canvas-shell {
       position: relative;
       width: min(90vw, 720px);
@@ -225,6 +251,10 @@
       <div class="pill" id="camInfo">Valid: 0 · Dirt: 0 · Grass: 0 · Water: 0 · Trees: 0 · Tree%: 0%</div>
       <div class="pill" id="slimeInfo">Slime: Not spawned</div>
       <div class="pill" id="acornCountLabel">Acorns: 0</div>
+      <div class="hud-debug" id="ambientPulseHud" aria-live="polite">
+        <div class="hud-debug-title">Ambient pulse history</div>
+        <div class="hud-debug-entry">Press F9 to show ambient pulse history.</div>
+      </div>
     </div>
   </div>
 
@@ -234,6 +264,7 @@
     const LOOSE_ACORN_MAX_VISIBLE = 5;
     const LOOSE_ACORN_DROP_CHANCE = 0.35;
     const FOREST_TREE_MIN_COUNT = 15;
+    const BARREN_STONE_MAX_COUNT = 24;
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
@@ -243,6 +274,19 @@
     const acornCountLabel = document.getElementById('acornCountLabel');
     const camInfoLabel = document.getElementById('camInfo');
     const slimeInfoLabel = document.getElementById('slimeInfo');
+    const ambientPulseHud = document.getElementById('ambientPulseHud');
+    const AMBIENT_PULSE_HISTORY_MAX = 5;
+    const ambientPulseHistory = [];
+    let ambientPulseHudVisible = false;
+
+    function escapeHtml(value) {
+      return String(value ?? '')
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    }
     let worldTurn = 0;
     function setTurnLabel() {
       if (!turnLabel) return;
@@ -253,6 +297,29 @@
       acornCountLabel.textContent = `Acorns: ${player?.acornCount || 0}`;
     }
 
+    function renderAmbientPulseHud() {
+      if (!ambientPulseHud) return;
+      const rows = ambientPulseHistory.length
+        ? ambientPulseHistory.map((entry) => `<div class="hud-debug-entry">${escapeHtml(entry)}</div>`).join('')
+        : '<div class="hud-debug-entry">Waiting for first pulse…</div>';
+      ambientPulseHud.innerHTML = `<div class="hud-debug-title">Ambient pulse history</div>${rows}`;
+      ambientPulseHud.classList.toggle('visible', ambientPulseHudVisible);
+    }
+
+    function recordAmbientPulse(message, now = performance.now()) {
+      const seconds = Math.floor(now / 1000);
+      ambientPulseHistory.unshift(`[t${worldTurn} · ${seconds}s] ${message}`);
+      if (ambientPulseHistory.length > AMBIENT_PULSE_HISTORY_MAX) {
+        ambientPulseHistory.length = AMBIENT_PULSE_HISTORY_MAX;
+      }
+      renderAmbientPulseHud();
+    }
+
+    function toggleAmbientPulseHud() {
+      ambientPulseHudVisible = !ambientPulseHudVisible;
+      renderAmbientPulseHud();
+    }
+
     function incrementWorldTurn() {
       worldTurn += 1;
       setTurnLabel();
@@ -261,24 +328,57 @@
     
     const ACORN_GROW_PULSES = 5;
 
-    function isTileOccupiedForTreeGrowth(tileX, tileY) {
-      // Player tile
-      const px = Math.floor(player.x);
-      const py = Math.floor(player.y);
-      if (px === tileX && py === tileY) return true;
+    function isTileOccupiedByActor(tileX, tileY) {
+      const playerTile = getPlayerTile();
+      if (playerTile.x === tileX && playerTile.y === tileY) return true;
 
-      // Chest tile (even if mounted, chest still exists)
-      const cx = Math.floor(chestState.x);
-      const cy = Math.floor(chestState.y);
-      if (cx === tileX && cy === tileY) return true;
+      const chestTile = getCurrentChestTile();
+      if (chestTile.x === tileX && chestTile.y === tileY) return true;
 
-      // Monsters
       for (const monster of monsters) {
         const mx = Math.floor(monster.x);
         const my = Math.floor(monster.y);
         if (mx === tileX && my === tileY) return true;
       }
       return false;
+    }
+
+    function isTileOccupiedForTreeGrowth(tileX, tileY) {
+      return isTileOccupiedByActor(tileX, tileY);
+    }
+
+    function canStoneSpawnAt(tileX, tileY, now = performance.now()) {
+      const key = keyOf(tileX, tileY);
+      if (tileAt(tileX, tileY) !== 'dirt') return false;
+      if (stoneState.has(key)) return false;
+      if (treeState.has(key) || removingTrees.has(key)) return false;
+      if (plantedAcorns.has(key) || looseAcorns.has(key)) return false;
+      if (isTileOccupiedByActor(tileX, tileY)) return false;
+      return true;
+    }
+
+    function getVisibleStoneCount(bounds = getVisibleBounds()) {
+      let count = 0;
+      for (const key of stoneState.keys()) {
+        const [x, y] = key.split(',').map(Number);
+        if (isWithinBounds(x, y, bounds)) count++;
+      }
+      return count;
+    }
+
+    function tryAmbientStoneSpawn(bounds = getVisibleBounds(), now = performance.now()) {
+      if (getVisibleStoneCount(bounds) >= BARREN_STONE_MAX_COUNT) return false;
+      const candidates = [];
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          if (!canStoneSpawnAt(x, y, now)) continue;
+          candidates.push({ x, y, key: keyOf(x, y) });
+        }
+      }
+      if (!candidates.length) return false;
+      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+      stoneState.set(chosen.key, { bornAt: now, variant: chooseStoneVariant() });
+      return true;
     }
 
     function tryAmbientPlantedAcornGrowth(environmentNow, now = performance.now()) {
@@ -312,6 +412,7 @@
       return grewAny;
     }
 setTurnLabel();
+    renderAmbientPulseHud();
     const itemBar = document.getElementById('itemBar');
     const itemButtons = [...document.querySelectorAll('.item-bar .item-slot[data-equip]')];
     const mobileControlsFrame = document.getElementById('mobileControlsFrame');
@@ -415,6 +516,7 @@ setTurnLabel();
     const tilePlacementState = new Map();
     const plantedAcorns = new Map();
     const looseAcorns = new Map();
+    const stoneState = new Map();
     const collectedAcornEffects = new Map();
 
     const movementReleaseGate = { up: false, down: false, left: false, right: false };
@@ -450,6 +552,10 @@ setTurnLabel();
     }
 
     function chooseTreeVariant() {
+      return Math.random() < 0.5 ? 'a' : 'b';
+    }
+
+    function chooseStoneVariant() {
       return Math.random() < 0.5 ? 'a' : 'b';
     }
 
@@ -674,6 +780,8 @@ setTurnLabel();
       shadowWalk: new Image(),
       greenSlime: new Image(),
       heroWanderer: new Image(),
+      stone: new Image(),
+      stone2: new Image(),
       acorn: new Image(),
       acornPlanted: new Image(),
 	  chest: new Image(),
@@ -698,6 +806,8 @@ setTurnLabel();
 	  shadowWalk: false,
 	  greenSlime: false,
       heroWanderer: false,
+      stone: false,
+      stone2: false,
       acorn: false,
       acornPlanted: false,
 	  chest: false,
@@ -789,6 +899,8 @@ setTurnLabel();
     loadAsset('shadowWalk', './mimic_walking.png');
     loadAsset('greenSlime', './monster_greenslime.png');
     loadAsset('heroWanderer', './hero_person.png');
+    loadAsset('stone', './objects/stone.png');
+    loadAsset('stone2', './objects/stone2.png');
     loadAsset('acorn', './acorn.png');
     loadAsset('acornPlanted', './acorn_planted.png');
 	loadAsset('chest', './mimic_chest.png');	
@@ -1013,6 +1125,18 @@ setTurnLabel();
       }
       out.sort((a, b) => a.score - b.score || a.y - b.y || a.x - b.x);
       return out;
+    }
+
+    function getEligibleLooseAcornDropTrees(treeTiles = getActiveTreeTiles(performance.now()), visibleBounds = getVisibleBounds()) {
+      const eligibleTrees = [];
+      for (const key of treeTiles) {
+        const [x, y] = key.split(',').map(Number);
+        if (!isWithinBounds(x, y, visibleBounds)) continue;
+        const candidates = getAdjacentAcornDropCandidates(x, y);
+        if (!candidates.length) continue;
+        eligibleTrees.push({ x, y, key, candidates });
+      }
+      return eligibleTrees;
     }
 
     function tryAmbientAcornDrop(now = performance.now(), treeTiles = getActiveTreeTiles(now), visibleBounds = getVisibleBounds()) {
@@ -1334,6 +1458,72 @@ setTurnLabel();
     }
 
 
+    function getStoneAssetForVariant(variant = 'a') {
+      if (variant === 'b' && loaded.stone2) return assets.stone2;
+      if (loaded.stone) return assets.stone;
+      if (loaded.stone2) return assets.stone2;
+      return null;
+    }
+
+    function getStoneAnimationProgress(tileKey, now) {
+      const state = stoneState.get(tileKey);
+      if (!state) return 1;
+      return Math.max(0, Math.min(1, (now - (state.bornAt || 0)) / TREE_GROW_MS));
+    }
+
+    function getStoneAnimState(progress) {
+      const eased = 1 - Math.pow(1 - progress, 3);
+      const pop = Math.sin(progress * Math.PI) * 0.08;
+      const scale = 0.78 + eased * 0.22 + pop;
+      return {
+        alpha: 0.35 + eased * 0.65,
+        scaleX: scale,
+        scaleY: scale,
+        yOffset: Math.round((1 - eased) * 14),
+      };
+    }
+
+    function drawStones(bounds, now = performance.now()) {
+      if (!stoneState.size) return;
+
+      for (const [key, info] of stoneState.entries()) {
+        const [x, y] = key.split(',').map(Number);
+        if (!isWithinBounds(x, y, bounds)) continue;
+
+        const screenX = camera.x + x * TILE_SIZE;
+        const screenY = camera.y + y * TILE_SIZE;
+        const variant = info?.variant || (treeScore(x + 91, y - 37) < 0.5 ? 'a' : 'b');
+        const stoneAsset = getStoneAssetForVariant(variant);
+        const baseW = stoneAsset ? stoneAsset.width : 36;
+        const baseH = stoneAsset ? stoneAsset.height : 36;
+        const anim = getStoneAnimState(getStoneAnimationProgress(key, now));
+        const drawW = Math.max(1, Math.round(baseW * anim.scaleX));
+        const drawH = Math.max(1, Math.round(baseH * anim.scaleY));
+        const drawX = Math.floor(screenX + (TILE_SIZE - drawW) / 2);
+        const drawY = Math.floor(screenY + TILE_SIZE - drawH + anim.yOffset);
+
+        ctx.save();
+        ctx.globalAlpha = anim.alpha;
+
+        if (stoneAsset) {
+          ctx.drawImage(stoneAsset, drawX, drawY, drawW, drawH);
+        } else {
+          ctx.fillStyle = '#8a8a8a';
+          ctx.beginPath();
+          ctx.moveTo(drawX + Math.round(drawW * 0.2), drawY + drawH);
+          ctx.lineTo(drawX + Math.round(drawW * 0.03), drawY + Math.round(drawH * 0.39));
+          ctx.lineTo(drawX + Math.round(drawW * 0.39), drawY + Math.round(drawH * 0.06));
+          ctx.lineTo(drawX + Math.round(drawW * 0.78), drawY + Math.round(drawH * 0.14));
+          ctx.lineTo(drawX + drawW - 1, drawY + Math.round(drawH * 0.44));
+          ctx.lineTo(drawX + drawW - Math.round(drawW * 0.17), drawY + drawH);
+          ctx.closePath();
+          ctx.fill();
+        }
+
+        ctx.restore();
+      }
+    }
+
     function drawLooseAcorns(bounds, now = performance.now()) {
       if (!looseAcorns.size) return;
       const groundBob = Math.sin(now / 220) * 1.5;
@@ -1654,29 +1844,71 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const treeTiles = getActiveTreeTiles(now);
       const biomeName = getCurrentBiome(visibleBounds, treeTiles);
 
-      // The ambient pulse is always rolled first, regardless of biome.
-      // The active biome only decides whether there is an event to resolve.
-      if (Math.random() > TREE_AMBIENT_GROWTH_CHANCE) return false;
-      if (biomeName !== 'Grassland' && biomeName !== 'Forest') return false;
+      const pulseRoll = Math.random();
+      if (pulseRoll > TREE_AMBIENT_GROWTH_CHANCE) {
+        recordAmbientPulse(`no event (roll ${pulseRoll.toFixed(2)} > ${TREE_AMBIENT_GROWTH_CHANCE.toFixed(2)})`, now);
+        return false;
+      }
+      if (biomeName === 'Barren') {
+        if (tryAmbientStoneSpawn(visibleBounds, now)) {
+          recordAmbientPulse('success: ambient stone spawn (+1)', now);
+          return true;
+        }
+        recordAmbientPulse('no spawn (barren; no eligible stone tiles)', now);
+        return false;
+      }
+
+      if (biomeName !== 'Grassland' && biomeName !== 'Forest') {
+        recordAmbientPulse(`blocked by biome: ${biomeName}`, now);
+        return false;
+      }
 
       const environmentNow = getEnvironmentNow(now);
 
-      if (tryAmbientPlantedAcornGrowth(environmentNow, now)) return true;
+      if (tryAmbientPlantedAcornGrowth(environmentNow, now)) {
+        recordAmbientPulse('success: planted acorn grew into a tree', now);
+        return true;
+      }
 
-      if (biomeName === 'Forest' && trySpawnForestSlime(visibleBounds, treeTiles, now)) return true;
+      if (biomeName === 'Forest' && trySpawnForestSlime(visibleBounds, treeTiles, now)) {
+        recordAmbientPulse('success: forest slime spawned', now);
+        return true;
+      }
 
       const tryDropFirst = Math.random() < LOOSE_ACORN_DROP_CHANCE;
       if (tryDropFirst) {
-        if (tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds)) return true;
+        if (tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds)) {
+          recordAmbientPulse('success: loose acorn dropped', now);
+          return true;
+        }
       }
 
       const desired = computeDesiredTreeTiles(environmentNow, getActiveSimulationBounds(), biomeName);
-      if (addAmbientTreesFromDesired(desired, environmentNow, visibleBounds, TREE_AMBIENT_GROWTH_MAX_ADDITIONS) > 0) return true;
-
-      if (!tryDropFirst) {
-        if (tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds)) return true;
+      const addedTrees = addAmbientTreesFromDesired(desired, environmentNow, visibleBounds, TREE_AMBIENT_GROWTH_MAX_ADDITIONS);
+      if (addedTrees > 0) {
+        recordAmbientPulse(`success: ambient tree growth (+${addedTrees})`, now);
+        return true;
       }
 
+      if (!tryDropFirst) {
+        if (tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds)) {
+          recordAmbientPulse('success: loose acorn dropped', now);
+          return true;
+        }
+      }
+
+      const visibleLooseAcornCount = getVisibleLooseAcornCount(visibleBounds);
+      const eligibleAcornTrees = getEligibleLooseAcornDropTrees(treeTiles, visibleBounds).length;
+      const outcome = tryDropFirst ? 'drop-first' : 'trees-first';
+      let detail = 'no valid spawn result';
+      if (visibleLooseAcornCount >= LOOSE_ACORN_MAX_VISIBLE) {
+        detail = `acorn cap (${visibleLooseAcornCount}/${LOOSE_ACORN_MAX_VISIBLE})`;
+      } else if (!eligibleAcornTrees) {
+        detail = 'no eligible acorn trees';
+      } else if (!desired.size) {
+        detail = 'no desired tree tiles';
+      }
+      recordAmbientPulse(`no spawn (${outcome}; ${detail})`, now);
       return false;
     }
 
@@ -2495,7 +2727,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
     }
 
     function drawBiomeLabel(name) {
-      const label = name || 'The Void';
+      const label = name || 'Abyss';
 
       const boxW = 120;
       const boxH = 34;
@@ -2503,10 +2735,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const padY = canvas.height - boxH - 14;
 
       ctx.save();
-      ctx.fillStyle = 'rgba(0, 0, 0, 0.55)';
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.65)';
       ctx.fillRect(padX, padY, boxW, boxH);
 
-      ctx.strokeStyle = 'rgba(255,255,255,0.18)';
+      ctx.strokeStyle = 'rgba(196,170,255,0.28)';
       ctx.strokeRect(padX + 0.5, padY + 0.5, boxW - 1, boxH - 1);
 
       ctx.fillStyle = '#f2f2f2';
@@ -2517,45 +2749,50 @@ function drawCollectedAcornEffects(now = performance.now()) {
     }
 
 
-    const VOID_PARTICLE_COUNT = 28;
+    const VOID_PARTICLE_COUNT = 56;
     const voidParticles = Array.from({ length: VOID_PARTICLE_COUNT }, (_, i) => ({
       seed: i + 1,
       x: ((i * 53) % 100) / 100,
       y: ((i * 37) % 100) / 100,
-      size: 1 + (i % 3),
-      speed: 0.2 + (i % 5) * 0.05,
-      drift: 8 + (i % 6) * 4,
-      alpha: 0.05 + (i % 4) * 0.015
+      size: 2 + (i % 4),
+      speed: 0.22 + (i % 7) * 0.06,
+      drift: 14 + (i % 7) * 6,
+      alpha: 0.11 + (i % 5) * 0.028,
+      edgeBias: (i % 2 === 0) ? 1 : -1,
     }));
 
     function drawVoidBackground(now) {
       const time = now * 0.001;
+      const cx = canvas.width * 0.5;
+      const cy = canvas.height * 0.5;
 
       ctx.save();
-      ctx.fillStyle = '#07050a';
+      ctx.fillStyle = '#05030a';
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       const glow = ctx.createRadialGradient(
-        canvas.width * 0.5,
+        cx,
         canvas.height * 0.45,
         0,
-        canvas.width * 0.5,
+        cx,
         canvas.height * 0.45,
-        Math.max(canvas.width, canvas.height) * 0.75
+        Math.max(canvas.width, canvas.height) * 0.82
       );
-      glow.addColorStop(0, 'rgba(62, 38, 86, 0.18)');
-      glow.addColorStop(0.45, 'rgba(26, 18, 42, 0.10)');
+      glow.addColorStop(0, 'rgba(92, 54, 140, 0.34)');
+      glow.addColorStop(0.35, 'rgba(46, 25, 74, 0.22)');
+      glow.addColorStop(0.72, 'rgba(20, 12, 34, 0.12)');
       glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = glow;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
       ctx.globalCompositeOperation = 'screen';
-      for (let i = 0; i < 3; i++) {
-        const hazeX = canvas.width * (0.22 + i * 0.28) + Math.sin(time * (0.08 + i * 0.03) + i * 1.7) * (24 + i * 8);
-        const hazeY = canvas.height * (0.3 + i * 0.18) + Math.cos(time * (0.06 + i * 0.02) + i * 2.3) * (18 + i * 6);
-        const hazeR = 120 + i * 34;
+      for (let i = 0; i < 5; i++) {
+        const hazeX = canvas.width * (0.12 + i * 0.19) + Math.sin(time * (0.11 + i * 0.025) + i * 1.9) * (40 + i * 10);
+        const hazeY = canvas.height * (0.16 + i * 0.17) + Math.cos(time * (0.09 + i * 0.02) + i * 2.4) * (28 + i * 9);
+        const hazeR = 150 + i * 42;
         const haze = ctx.createRadialGradient(hazeX, hazeY, 0, hazeX, hazeY, hazeR);
-        haze.addColorStop(0, `rgba(${50 + i * 8}, ${28 + i * 4}, ${72 + i * 10}, 0.05)`);
+        haze.addColorStop(0, `rgba(${86 + i * 10}, ${42 + i * 5}, ${128 + i * 12}, 0.12)`);
+        haze.addColorStop(0.45, `rgba(${48 + i * 6}, ${22 + i * 4}, ${78 + i * 8}, 0.07)`);
         haze.addColorStop(1, 'rgba(0, 0, 0, 0)');
         ctx.fillStyle = haze;
         ctx.beginPath();
@@ -2563,26 +2800,68 @@ function drawCollectedAcornEffects(now = performance.now()) {
         ctx.fill();
       }
 
+      const edgeGlowLeft = ctx.createLinearGradient(0, 0, canvas.width * 0.26, 0);
+      edgeGlowLeft.addColorStop(0, 'rgba(110, 72, 160, 0.26)');
+      edgeGlowLeft.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = edgeGlowLeft;
+      ctx.fillRect(0, 0, canvas.width * 0.26, canvas.height);
+
+      const edgeGlowRight = ctx.createLinearGradient(canvas.width, 0, canvas.width * 0.74, 0);
+      edgeGlowRight.addColorStop(0, 'rgba(110, 72, 160, 0.26)');
+      edgeGlowRight.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = edgeGlowRight;
+      ctx.fillRect(canvas.width * 0.74, 0, canvas.width * 0.26, canvas.height);
+
+      const edgeGlowTop = ctx.createLinearGradient(0, 0, 0, canvas.height * 0.22);
+      edgeGlowTop.addColorStop(0, 'rgba(88, 50, 132, 0.18)');
+      edgeGlowTop.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = edgeGlowTop;
+      ctx.fillRect(0, 0, canvas.width, canvas.height * 0.22);
+
+      const edgeGlowBottom = ctx.createLinearGradient(0, canvas.height, 0, canvas.height * 0.76);
+      edgeGlowBottom.addColorStop(0, 'rgba(88, 50, 132, 0.2)');
+      edgeGlowBottom.addColorStop(1, 'rgba(0, 0, 0, 0)');
+      ctx.fillStyle = edgeGlowBottom;
+      ctx.fillRect(0, canvas.height * 0.76, canvas.width, canvas.height * 0.24);
+
       for (const particle of voidParticles) {
-        const px = ((particle.x * canvas.width) + time * particle.speed * 18 + Math.sin(time * 0.7 + particle.seed) * particle.drift) % (canvas.width + 24) - 12;
-        const pyBase = particle.y * canvas.height;
-        const py = (pyBase + Math.sin(time * 0.45 + particle.seed * 1.9) * particle.drift * 0.7 + time * particle.speed * 4) % (canvas.height + 24) - 12;
-        ctx.fillStyle = `rgba(170, 150, 210, ${particle.alpha})`;
+        const edgeAnchorX = particle.edgeBias > 0 ? canvas.width * 0.9 : canvas.width * 0.1;
+        const px = edgeAnchorX
+          + Math.sin(time * (0.55 + particle.speed * 0.4) + particle.seed * 1.7) * (22 + particle.drift)
+          + Math.cos(time * 0.17 + particle.seed) * 8;
+        const py = (particle.y * canvas.height + time * particle.speed * 18 + Math.sin(time * 0.52 + particle.seed * 2.1) * (18 + particle.drift * 0.55)) % (canvas.height + 32) - 16;
+        ctx.fillStyle = `rgba(196, 176, 255, ${particle.alpha})`;
         ctx.fillRect(Math.round(px), Math.round(py), particle.size, particle.size);
+      }
+
+      ctx.globalCompositeOperation = 'lighter';
+      for (let i = 0; i < 10; i++) {
+        const edge = i % 2 === 0 ? 0.08 : 0.92;
+        const streakX = canvas.width * edge + Math.sin(time * (0.7 + i * 0.06) + i * 0.9) * 16;
+        const streakY = (canvas.height * ((i * 0.11) % 1) + time * (8 + i)) % (canvas.height + 80) - 40;
+        const streakW = 2 + (i % 2);
+        const streakH = 24 + (i % 5) * 10;
+        const streak = ctx.createLinearGradient(streakX, streakY, streakX, streakY + streakH);
+        streak.addColorStop(0, 'rgba(255,255,255,0)');
+        streak.addColorStop(0.45, 'rgba(206,185,255,0.18)');
+        streak.addColorStop(1, 'rgba(255,255,255,0)');
+        ctx.fillStyle = streak;
+        ctx.fillRect(streakX, streakY, streakW, streakH);
       }
 
       ctx.globalCompositeOperation = 'source-over';
       const vignette = ctx.createRadialGradient(
-        canvas.width * 0.5,
-        canvas.height * 0.5,
-        Math.min(canvas.width, canvas.height) * 0.18,
-        canvas.width * 0.5,
-        canvas.height * 0.5,
-        Math.max(canvas.width, canvas.height) * 0.72
+        cx,
+        cy,
+        Math.min(canvas.width, canvas.height) * 0.2,
+        cx,
+        cy,
+        Math.max(canvas.width, canvas.height) * 0.8
       );
       vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      vignette.addColorStop(0.72, 'rgba(0, 0, 0, 0.18)');
-      vignette.addColorStop(1, 'rgba(0, 0, 0, 0.52)');
+      vignette.addColorStop(0.62, 'rgba(0, 0, 0, 0.22)');
+      vignette.addColorStop(0.84, 'rgba(14, 7, 22, 0.42)');
+      vignette.addColorStop(1, 'rgba(0, 0, 0, 0.72)');
       ctx.fillStyle = vignette;
       ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
@@ -4959,6 +5238,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
 
       drawPlantedAcorns(bounds, now);
+      drawStones(bounds, now);
 
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
         for (let x = bounds.minX; x <= bounds.maxX; x++) {
@@ -5022,10 +5302,11 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const handText = player.form === 'shadow' && player.heldTile ? ` · Holding: ${player.heldTile}` : '';
       const acornText = ` · Acorns: ${player.acornCount || 0}`;
       const visibleStats = getVisibleBiomeStats(bounds, treeTiles);
+      const visibleStoneCount = getVisibleStoneCount(bounds);
       const treePct = visibleStats.validTreeTiles > 0 ? Math.round((visibleStats.treeCount / visibleStats.validTreeTiles) * 100) : 0;
       posLabel.textContent = `Form: ${formLabel} · Tile: ${playerTile.x}, ${playerTile.y}${handText}`;
       if (camInfoLabel) {
-        camInfoLabel.textContent = `Valid: ${visibleStats.validTreeTiles} · Dirt: ${visibleStats.dirtTiles} · Grass: ${visibleStats.grassTiles} · Water: ${visibleStats.waterTiles} · Trees: ${visibleStats.treeCount} · Tree%: ${treePct}%`;
+        camInfoLabel.textContent = `Valid: ${visibleStats.validTreeTiles} · Dirt: ${visibleStats.dirtTiles} · Grass: ${visibleStats.grassTiles} · Water: ${visibleStats.waterTiles} · Trees: ${visibleStats.treeCount} · Stones: ${visibleStoneCount} · Tree%: ${treePct}%`;
       }
       updateSlimeInfoLabel();
       syncItemBarUi();
@@ -5037,7 +5318,9 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const tile = tileAt(tx, ty);
       if (!tile) return false;
       if (tile === 'water') return false;
-      if (!ignoreTrees && getActiveTreeTiles(performance.now()).has(keyOf(tx, ty))) return false;
+      const tileKey = keyOf(tx, ty);
+      if (!ignoreTrees && getActiveTreeTiles(performance.now()).has(tileKey)) return false;
+      if (stoneState.has(tileKey)) return false;
       return true;
     }
 
@@ -5537,7 +5820,11 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
 
       if (key === 'f9' && !e.repeat) {
-        createDebugForestAroundPlayer(performance.now());
+        if (e.shiftKey) {
+          createDebugForestAroundPlayer(performance.now());
+        } else {
+          toggleAmbientPulseHud();
+        }
         return;
       }
 
