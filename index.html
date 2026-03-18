@@ -265,6 +265,7 @@
     const LOOSE_ACORN_DROP_CHANCE = 0.35;
     const FOREST_TREE_MIN_COUNT = 15;
     const BARREN_STONE_MAX_COUNT = 24;
+    const GRASSLAND_FLOWER_MAX_COUNT = 18;
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
@@ -344,6 +345,8 @@
     }
 
     function isTileOccupiedForTreeGrowth(tileX, tileY) {
+      const key = keyOf(tileX, tileY);
+      if (flowerState.has(key)) return true;
       return isTileOccupiedByActor(tileX, tileY);
     }
 
@@ -351,11 +354,78 @@
       const key = keyOf(tileX, tileY);
       if (tileAt(tileX, tileY) !== 'dirt') return false;
       if (stoneState.has(key)) return false;
-      if (treeState.has(key) || removingTrees.has(key)) return false;
-      if (removingStones.has(key)) return false;
+      if (treeState.has(key) || isDestructibleRemoving(key, 'tree')) return false;
+      if (isDestructibleRemoving(key, 'stone')) return false;
       if (plantedAcorns.has(key) || looseAcorns.has(key)) return false;
       if (isTileOccupiedByActor(tileX, tileY)) return false;
       return true;
+    }
+
+    function isFlowerAdjacentToTreeOrWater(tileX, tileY, treeTiles = getActiveTreeTiles(performance.now())) {
+      const dirs = [
+        { dx: 0, dy: -1 },
+        { dx: 1, dy: 0 },
+        { dx: 0, dy: 1 },
+        { dx: -1, dy: 0 },
+      ];
+      for (const dir of dirs) {
+        const nx = tileX + dir.dx;
+        const ny = tileY + dir.dy;
+        if (tileAt(nx, ny) === 'water') return true;
+        if (treeTiles.has(keyOf(nx, ny))) return true;
+      }
+      return false;
+    }
+
+    function canFlowerSpawnAt(tileX, tileY, treeTiles = getActiveTreeTiles(performance.now()), now = performance.now()) {
+      const key = keyOf(tileX, tileY);
+      if (tileAt(tileX, tileY) !== 'grass') return false;
+      if (flowerState.has(key)) return false;
+      if (treeState.has(key) || isDestructibleRemoving(key, 'tree')) return false;
+      if (stoneState.has(key) || isDestructibleRemoving(key, 'stone')) return false;
+      if (plantedAcorns.has(key) || looseAcorns.has(key)) return false;
+      if (isTileOccupiedByActor(tileX, tileY)) return false;
+      if (!isFlowerAdjacentToTreeOrWater(tileX, tileY, treeTiles)) return false;
+      return true;
+    }
+
+    function getVisibleFlowerCount(bounds = getVisibleBounds()) {
+      let count = 0;
+      for (const key of flowerState.keys()) {
+        const [x, y] = key.split(',').map(Number);
+        if (isWithinBounds(x, y, bounds)) count++;
+      }
+      return count;
+    }
+
+    function tryAmbientFlowerSpawn(bounds = getVisibleBounds(), treeTiles = getActiveTreeTiles(performance.now()), now = performance.now()) {
+      if (getVisibleFlowerCount(bounds) >= GRASSLAND_FLOWER_MAX_COUNT) return false;
+      const candidates = [];
+      for (let y = bounds.minY; y <= bounds.maxY; y++) {
+        for (let x = bounds.minX; x <= bounds.maxX; x++) {
+          if (!canFlowerSpawnAt(x, y, treeTiles, now)) continue;
+          candidates.push({ x, y, key: keyOf(x, y) });
+        }
+      }
+      if (!candidates.length) return false;
+      const chosen = candidates[Math.floor(Math.random() * candidates.length)];
+      flowerState.set(chosen.key, { bornAt: now, animOffsetMs: Math.floor(Math.random() * FLOWER_FRAMES * FLOWER_FRAME_MS) });
+      return true;
+    }
+
+    function reconcileFlowers(now = performance.now(), treeTiles = getActiveTreeTiles(now)) {
+      if (!flowerState.size) return;
+      for (const [key] of [...flowerState.entries()]) {
+        const [x, y] = key.split(',').map(Number);
+        const base = tileAt(x, y);
+        if (base !== 'grass') {
+          flowerState.delete(key);
+          continue;
+        }
+        if (treeTiles.has(key) || stoneState.has(key) || plantedAcorns.has(key) || looseAcorns.has(key)) {
+          flowerState.delete(key);
+        }
+      }
     }
 
     function getVisibleStoneCount(bounds = getVisibleBounds()) {
@@ -513,16 +583,17 @@ setTurnLabel();
     const grassVariants = new Map();
     const treeState = new Map();
     const choppedTrees = new Map();
-    const removingTrees = new Map();
-    const removingStones = new Map();
+    const removingObjects = new Map();
     const tilePlacementState = new Map();
     const plantedAcorns = new Map();
     const looseAcorns = new Map();
     const stoneState = new Map();
+    const flowerState = new Map();
     const destructibleObjectHp = new Map();
     const DESTRUCTIBLE_OBJECT_TYPES = {
       tree: { maxHp: 3, label: 'Remove' },
       stone: { maxHp: 6, label: 'Remove' },
+      flower: { maxHp: 1, label: 'Remove' },
     };
     const collectedAcornEffects = new Map();
 
@@ -564,6 +635,28 @@ setTurnLabel();
 
     function chooseStoneVariant() {
       return Math.random() < 0.5 ? 'a' : 'b';
+    }
+
+    function getRemovingObject(key, type = null) {
+      const obj = removingObjects.get(key);
+      if (!obj) return null;
+      if (type && obj.type !== type) return null;
+      return obj;
+    }
+
+    function isDestructibleRemoving(key, type = null) {
+      return !!getRemovingObject(key, type);
+    }
+
+    function beginDestructibleRemoval(type, key, startedAt, extra = {}) {
+      removingObjects.set(key, { type, startedAt, ...extra });
+    }
+
+    function clearRemovingDestructible(key, type = null) {
+      const obj = getRemovingObject(key, type);
+      if (!obj) return false;
+      removingObjects.delete(key);
+      return true;
     }
 
     function setTile(x, y, type, animate = true, now = performance.now()) {
@@ -789,6 +882,7 @@ setTurnLabel();
       heroWanderer: new Image(),
       stone: new Image(),
       stone2: new Image(),
+      flower: new Image(),
       acorn: new Image(),
       acornPlanted: new Image(),
 	  chest: new Image(),
@@ -815,6 +909,7 @@ setTurnLabel();
       heroWanderer: false,
       stone: false,
       stone2: false,
+      flower: false,
       acorn: false,
       acornPlanted: false,
 	  chest: false,
@@ -908,6 +1003,7 @@ setTurnLabel();
     loadAsset('heroWanderer', './hero_person.png');
     loadAsset('stone', './objects/stone.png');
     loadAsset('stone2', './objects/stone2.png');
+    loadAsset('flower', './objects/flower.png');
     loadAsset('acorn', './acorn.png');
     loadAsset('acornPlanted', './acorn_planted.png');
 	loadAsset('chest', './mimic_chest.png');	
@@ -919,6 +1015,8 @@ setTurnLabel();
     const WATER_TOP_FRAMES = 4;
     const WATER_EDGE_FRAMES = 3;
     const WATER_ANIM_MS = 220;
+    const FLOWER_FRAMES = 4;
+    const FLOWER_FRAME_MS = 180;
 
     function getWaterTopFrame(now) {
       return Math.floor(now / WATER_ANIM_MS) % WATER_TOP_FRAMES;
@@ -926,6 +1024,16 @@ setTurnLabel();
 
     function getWaterEdgeFrame(now) {
       return Math.floor(now / WATER_ANIM_MS) % WATER_EDGE_FRAMES;
+    }
+
+    function getFlowerFrame(now) {
+      return Math.floor(now / FLOWER_FRAME_MS) % FLOWER_FRAMES;
+    }
+
+    function getFlowerFrameForKey(tileKey, now = performance.now()) {
+      const state = flowerState.get(tileKey) || getRemovingObject(tileKey, 'flower');
+      const offset = state?.animOffsetMs || 0;
+      return Math.floor((now + offset) / FLOWER_FRAME_MS) % FLOWER_FRAMES;
     }
 
     function drawAnimatedStripFrame(img, frameCount, frameIndex, screenX, screenY, drawW, drawH) {
@@ -1000,7 +1108,7 @@ setTurnLabel();
       if (pausedTreeTiles) return new Set(pausedTreeTiles);
       const active = new Set();
       for (const [key] of treeState) {
-        if (removingTrees.has(key)) continue;
+        if (isDestructibleRemoving(key, 'tree')) continue;
         active.add(key);
       }
       return active;
@@ -1009,7 +1117,8 @@ setTurnLabel();
     function getDestructibleTypeAt(tileX, tileY, now = performance.now()) {
       const key = keyOf(tileX, tileY);
       if (getActiveTreeTiles(now).has(key)) return 'tree';
-      if (stoneState.has(key) || removingStones.has(key)) return 'stone';
+      if (stoneState.has(key) || isDestructibleRemoving(key, 'stone')) return 'stone';
+      if (flowerState.has(key) || isDestructibleRemoving(key, 'flower')) return 'flower';
       return null;
     }
 
@@ -1056,7 +1165,8 @@ setTurnLabel();
       if (!resolvedType) return false;
       clearDestructibleHp(key);
       if (resolvedType === 'tree') return chopTreeAt(x, y, now);
-      if (resolvedType === 'stone') return removeStoneAt(x, y);
+      if (resolvedType === 'stone') return removeStoneAt(x, y, now);
+      if (resolvedType === 'flower') return removeFlowerAt(x, y, now);
       return false;
     }
 
@@ -1095,7 +1205,7 @@ setTurnLabel();
 
     function chopTreeAt(x, y, now = performance.now()) {
       const key = keyOf(x, y);
-      removingTrees.set(key, { startedAt: now, variant: treeState.get(key)?.variant || chooseTreeVariant() });
+      beginDestructibleRemoval('tree', key, now, { variant: treeState.get(key)?.variant || chooseTreeVariant() });
       treeState.delete(key);
       if (pausedTreeTiles) pausedTreeTiles.delete(key);
       clearDestructibleHp(key);
@@ -1107,7 +1217,7 @@ setTurnLabel();
       const key = keyOf(x, y);
       let removed = false;
       if (treeState.delete(key)) removed = true;
-      if (removingTrees.delete(key)) removed = true;
+      if (clearRemovingDestructible(key, 'tree')) removed = true;
       if (pausedTreeTiles && pausedTreeTiles.delete(key)) removed = true;
       clearDestructibleHp(key);
       if (player.selectedDestructibleKey === key) clearSelectedTree();
@@ -1555,7 +1665,7 @@ setTurnLabel();
     }
 
     function getStoneFadeProgress(tileKey, now) {
-      const state = removingStones.get(tileKey);
+      const state = getRemovingObject(tileKey, 'stone');
       if (!state) return 1;
       return Math.max(0, Math.min(1, 1 - ((now - (state.startedAt || 0)) / TREE_FADE_MS)));
     }
@@ -1563,7 +1673,7 @@ setTurnLabel();
     function getStoneRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), now = performance.now(), mode = 'normal') {
       const screenX = camera.x + tileX * TILE_SIZE;
       const screenY = camera.y + tileY * TILE_SIZE;
-      const info = stoneState.get(key) || removingStones.get(key);
+      const info = stoneState.get(key) || getRemovingObject(key, 'stone');
       const variant = info?.variant || (treeScore(tileX + 91, tileY - 37) < 0.5 ? 'a' : 'b');
       const stoneAsset = getStoneAssetForVariant(variant);
       const baseW = stoneAsset ? stoneAsset.width : 36;
@@ -1593,7 +1703,7 @@ setTurnLabel();
       const key = keyOf(x, y);
       const info = stoneState.get(key);
       if (!info) return false;
-      removingStones.set(key, { startedAt: now, variant: info.variant || 'a' });
+      beginDestructibleRemoval('stone', key, now, { variant: info.variant || 'a' });
       stoneState.delete(key);
       clearDestructibleHp(key);
       if (player.selectedDestructibleKey === key) clearSelectedTree();
@@ -1604,11 +1714,32 @@ setTurnLabel();
       const key = keyOf(x, y);
       let removed = false;
       if (stoneState.delete(key)) removed = true;
-      if (removingStones.delete(key)) removed = true;
+      if (clearRemovingDestructible(key, 'stone')) removed = true;
       clearDestructibleHp(key);
       if (player.selectedDestructibleKey === key) clearSelectedTree();
       return removed;
     }
+    function removeFlowerAt(x, y, now = performance.now()) {
+      const key = keyOf(x, y);
+      const info = flowerState.get(key);
+      if (!info) return false;
+      beginDestructibleRemoval('flower', key, now, { animOffsetMs: info.animOffsetMs || 0 });
+      flowerState.delete(key);
+      clearDestructibleHp(key);
+      if (player.selectedDestructibleKey === key) clearSelectedTree();
+      return true;
+    }
+
+    function removeFlowerImmediately(x, y) {
+      const key = keyOf(x, y);
+      let removed = false;
+      if (flowerState.delete(key)) removed = true;
+      if (clearRemovingDestructible(key, 'flower')) removed = true;
+      clearDestructibleHp(key);
+      if (player.selectedDestructibleKey === key) clearSelectedTree();
+      return removed;
+    }
+
 
     function drawStoneSprite(info) {
       ctx.save();
@@ -1633,7 +1764,7 @@ setTurnLabel();
     }
 
     function drawStones(bounds, now = performance.now()) {
-      if (!stoneState.size && !removingStones.size) return;
+      if (!stoneState.size && !removingObjects.size) return;
 
       for (const [key] of stoneState.entries()) {
         const [x, y] = key.split(',').map(Number);
@@ -1642,11 +1773,86 @@ setTurnLabel();
         drawStoneSprite(info);
       }
 
-      for (const [key] of removingStones.entries()) {
+      for (const [key, state] of removingObjects.entries()) {
+        if (state.type !== 'stone') continue;
         const [x, y] = key.split(',').map(Number);
         if (!isWithinBounds(x, y, bounds)) continue;
         const info = getStoneRenderInfo(x, y, 1, key, now, 'fade');
         drawStoneSprite(info);
+      }
+    }
+
+    function getFlowerAnimationProgress(tileKey, now = performance.now()) {
+      const state = flowerState.get(tileKey);
+      if (!state) return 1;
+      return Math.max(0, Math.min(1, (now - (state.bornAt || 0)) / TREE_GROW_MS));
+    }
+
+    function getFlowerFadeProgress(tileKey, now) {
+      const state = getRemovingObject(tileKey, 'flower');
+      if (!state) return 1;
+      return Math.max(0, Math.min(1, 1 - ((now - (state.startedAt || 0)) / TREE_FADE_MS)));
+    }
+
+    function getFlowerRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), now = performance.now(), mode = 'normal') {
+      const screenX = camera.x + tileX * TILE_SIZE;
+      const screenY = camera.y + tileY * TILE_SIZE;
+      const anim = getTreeAnimState(progress);
+      const flowerAsset = loaded.flower ? assets.flower : null;
+      const baseW = flowerAsset ? (flowerAsset.width / FLOWER_FRAMES) : TILE_SIZE;
+      const baseH = flowerAsset ? flowerAsset.height : TILE_SIZE;
+      let alpha = anim.alpha;
+      let scaleX = anim.scaleX;
+      let scaleY = anim.scaleY;
+      let yOffset = anim.yOffset;
+
+      if (mode === 'fade') {
+        const fade = getFlowerFadeProgress(key, now);
+        alpha *= fade;
+        scaleX *= 1 - (1 - fade) * 0.06;
+        scaleY *= 1 - (1 - fade) * 0.06;
+        yOffset -= Math.round((1 - fade) * 8);
+      }
+
+      const scale = 1.0;
+      const drawW = Math.max(1, Math.round(baseW * scale * scaleX));
+      const drawH = Math.max(1, Math.round(baseH * scale * scaleY));
+      const drawX = Math.floor(screenX + (TILE_SIZE - drawW) / 2);
+      const drawY = Math.floor(screenY + TILE_SIZE - drawH + yOffset + 4);
+      return { flowerAsset, drawW, drawH, drawX, drawY, alpha };
+    }
+
+    function drawFlowerSprite(info, tileKey, now = performance.now()) {
+      ctx.save();
+      ctx.globalAlpha = info.alpha;
+      if (info.flowerAsset) {
+        drawAnimatedStripFrame(info.flowerAsset, FLOWER_FRAMES, getFlowerFrameForKey(tileKey, now), info.drawX, info.drawY, info.drawW, info.drawH);
+      } else {
+        ctx.fillStyle = '#5cce7c';
+        ctx.fillRect(info.drawX + Math.round(info.drawW * 0.45), info.drawY + Math.round(info.drawH * 0.45), Math.max(2, Math.round(info.drawW * 0.08)), Math.round(info.drawH * 0.45));
+        ctx.fillStyle = '#cc55d8';
+        ctx.beginPath();
+        ctx.arc(info.drawX + info.drawW / 2, info.drawY + info.drawH * 0.3, Math.max(4, info.drawW * 0.22), 0, Math.PI * 2);
+        ctx.fill();
+      }
+      ctx.restore();
+    }
+
+    function drawFlowers(bounds, now = performance.now()) {
+      if (!flowerState.size && !removingObjects.size) return;
+      for (const [key] of flowerState.entries()) {
+        const [x, y] = key.split(',').map(Number);
+        if (!isWithinBounds(x, y, bounds)) continue;
+        const info = getFlowerRenderInfo(x, y, getFlowerAnimationProgress(key, now), key, now, 'normal');
+        drawFlowerSprite(info, key, now);
+      }
+
+      for (const [key, state] of removingObjects.entries()) {
+        if (state.type !== 'flower') continue;
+        const [x, y] = key.split(',').map(Number);
+        if (!isWithinBounds(x, y, bounds)) continue;
+        const info = getFlowerRenderInfo(x, y, 1, key, now, 'fade');
+        drawFlowerSprite(info, key, now);
       }
     }
 
@@ -1881,6 +2087,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
         }
       }
 
+      for (const key of flowerState.keys()) {
+        occupied.add(key);
+      }
+
       return occupied;
     }
 
@@ -1934,7 +2144,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (!(desired instanceof Set) || desired.size === 0 || maxAdditions <= 0) return 0;
       const additions = [];
       for (const key of desired) {
-        if (treeState.has(key) || removingTrees.has(key)) continue;
+        if (treeState.has(key) || isDestructibleRemoving(key, 'tree')) continue;
         additions.push(key);
       }
       if (!additions.length) return 0;
@@ -1982,6 +2192,13 @@ function drawCollectedAcornEffects(now = performance.now()) {
         }
         recordAmbientPulse('no spawn (barren; no eligible stone tiles)', now);
         return false;
+      }
+
+      if (biomeName === 'Grassland') {
+        if (tryAmbientFlowerSpawn(visibleBounds, treeTiles, now)) {
+          recordAmbientPulse('success: ambient flower spawn (+1)', now);
+          return true;
+        }
       }
 
       if (biomeName !== 'Grassland' && biomeName !== 'Forest') {
@@ -2048,7 +2265,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
         for (let x = bounds.minX; x <= bounds.maxX; x++) {
           const key = keyOf(x, y);
-          if (removingTrees.has(key)) continue;
+          if (isDestructibleRemoving(key, 'tree')) continue;
           if (!canTreeSpawnAt(x, y)) continue;
           eligibleCount++;
 
@@ -2133,16 +2350,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
 
       const areaPad = radius + 2;
-      for (const [key] of removingTrees) {
+      for (const [key] of removingObjects) {
         const [x, y] = key.split(',').map(Number);
         if (Math.abs(x - playerTile.x) <= areaPad && Math.abs(y - playerTile.y) <= areaPad) {
-          removingTrees.delete(key);
-        }
-      }
-      for (const [key] of removingStones) {
-        const [x, y] = key.split(',').map(Number);
-        if (Math.abs(x - playerTile.x) <= areaPad && Math.abs(y - playerTile.y) <= areaPad) {
-          removingStones.delete(key);
+          removingObjects.delete(key);
         }
       }
 
@@ -2221,7 +2432,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
     function getTreeRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), mode = 'normal', now = performance.now()) {
       const baseScreenX = camera.x + tileX * TILE_SIZE;
       const baseScreenY = camera.y + tileY * TILE_SIZE;
-      const treeInfo = treeState.get(key) || removingTrees.get(key);
+      const treeInfo = treeState.get(key) || getRemovingObject(key, 'tree');
       const treeVariant = treeInfo?.variant === 'b' ? 'treeB' : 'tree';
       const treeAsset = loaded[treeVariant] ? assets[treeVariant] : assets.tree;
       const treeLoaded = loaded[treeVariant] || loaded.tree;
@@ -2232,7 +2443,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       let yOffset = anim.yOffset;
 
       if (mode === 'fade') {
-        const fade = Math.max(0, Math.min(1, 1 - ((now - removingTrees.get(key).startedAt) / TREE_FADE_MS)));
+        const fade = Math.max(0, Math.min(1, 1 - ((now - getRemovingObject(key, 'tree').startedAt) / TREE_FADE_MS)));
         alpha *= fade;
         scaleX *= 1 - (1 - fade) * 0.06;
         scaleY *= 1 - (1 - fade) * 0.06;
@@ -2328,15 +2539,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
       ctx.restore();
     }
 
-    function updateRemovingTrees(now = performance.now()) {
-      for (const [key, state] of [...removingTrees.entries()]) {
+    function updateRemovingObjects(now = performance.now()) {
+      for (const [key, state] of [...removingObjects.entries()]) {
         if (now - state.startedAt >= TREE_FADE_MS) {
-          removingTrees.delete(key);
-        }
-      }
-      for (const [key, state] of [...removingStones.entries()]) {
-        if (now - state.startedAt >= TREE_FADE_MS) {
-          removingStones.delete(key);
+          removingObjects.delete(key);
         }
       }
     }
@@ -2519,7 +2725,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
 	    return true;
 	  }
 
-	  if (effect.kind === 'tree' || effect.kind === 'stone') {
+	  if (effect.kind === 'tree' || effect.kind === 'stone' || effect.kind === 'flower') {
 	    const result = applyDamageToDestructibleAt(effect.targetX, effect.targetY, effect.totalDamage, now);
 	    spawnFloatingText(`-${effect.totalDamage}`, effect.targetX, effect.targetY, now, {
 	      color: '#ffdf7a',
@@ -5328,10 +5534,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
         state.bornAt = now - TREE_GROW_MS;
         if (state.pendingReveal) state.pendingReveal = false;
       }
-      for (const key of [...removingTrees.keys()]) {
+      for (const [key, state] of [...removingObjects.entries()]) {
         const [x, y] = key.split(',').map(Number);
-        if (isWithinBounds(x, y, bounds)) {
-          removingTrees.delete(key);
+        if (state.type === 'tree' && isWithinBounds(x, y, bounds)) {
+          removingObjects.delete(key);
         }
       }
       return treeTiles;
@@ -5367,7 +5573,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
     function render(now = performance.now()) {
       const environmentNow = getEnvironmentNow(now);
       updateCamera();
-      updateRemovingTrees(now);
+      updateRemovingObjects(now);
       refreshSelectedTree(environmentNow);
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       drawVoidBackground(now);
@@ -5377,6 +5583,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         tryAmbientTreeGrowth(now);
       }
       const treeTiles = getActiveTreeTiles(now);
+      reconcileFlowers(now, treeTiles);
       const biomeName = getCurrentBiome(bounds, treeTiles);
 
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -5390,6 +5597,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
 
       drawPlantedAcorns(bounds, now);
+      drawFlowers(bounds, now);
       drawStones(bounds, now);
 
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -5397,7 +5605,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
           const tileKey = keyOf(x, y);
           if (treeTiles.has(tileKey)) {
             drawTreeBottomAtTile(x, y, getTreeAnimationProgress(tileKey, environmentNow), 'normal', environmentNow);
-          } else if (removingTrees.has(tileKey)) {
+          } else if (isDestructibleRemoving(tileKey, 'tree')) {
             drawTreeBottomAtTile(x, y, 1, 'fade', now);
           }
         }
@@ -5436,7 +5644,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
           const tileKey = keyOf(x, y);
           if (treeTiles.has(tileKey)) {
             drawTreeTopAtTile(x, y, getTreeAnimationProgress(tileKey, environmentNow), 'normal', environmentNow);
-          } else if (removingTrees.has(tileKey)) {
+          } else if (isDestructibleRemoving(tileKey, 'tree')) {
             drawTreeTopAtTile(x, y, 1, 'fade', now);
           }
         }
@@ -5455,10 +5663,11 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const acornText = ` · Acorns: ${player.acornCount || 0}`;
       const visibleStats = getVisibleBiomeStats(bounds, treeTiles);
       const visibleStoneCount = getVisibleStoneCount(bounds);
+      const visibleFlowerCount = getVisibleFlowerCount(bounds);
       const treePct = visibleStats.validTreeTiles > 0 ? Math.round((visibleStats.treeCount / visibleStats.validTreeTiles) * 100) : 0;
       posLabel.textContent = `Form: ${formLabel} · Tile: ${playerTile.x}, ${playerTile.y}${handText}`;
       if (camInfoLabel) {
-        camInfoLabel.textContent = `Valid: ${visibleStats.validTreeTiles} · Dirt: ${visibleStats.dirtTiles} · Grass: ${visibleStats.grassTiles} · Water: ${visibleStats.waterTiles} · Trees: ${visibleStats.treeCount} · Stones: ${visibleStoneCount} · Tree%: ${treePct}%`;
+        camInfoLabel.textContent = `Valid: ${visibleStats.validTreeTiles} · Dirt: ${visibleStats.dirtTiles} · Grass: ${visibleStats.grassTiles} · Water: ${visibleStats.waterTiles} · Trees: ${visibleStats.treeCount} · Flowers: ${visibleFlowerCount} · Stones: ${visibleStoneCount} · Tree%: ${treePct}%`;
       }
       updateSlimeInfoLabel();
       syncItemBarUi();
@@ -5472,7 +5681,8 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (tile === 'water') return false;
       const tileKey = keyOf(tx, ty);
       if (!ignoreTrees && getActiveTreeTiles(performance.now()).has(tileKey)) return false;
-      if (stoneState.has(tileKey) || removingStones.has(tileKey)) return false;
+      if (stoneState.has(tileKey) || isDestructibleRemoving(tileKey, 'stone')) return false;
+      if (flowerState.has(tileKey) || isDestructibleRemoving(tileKey, 'flower')) return false;
       return true;
     }
 
