@@ -266,6 +266,12 @@
     const FOREST_TREE_MIN_COUNT = 15;
     const BARREN_STONE_MAX_COUNT = 24;
     const GRASSLAND_FLOWER_MAX_COUNT = 18;
+    const AMBIENT_EVENT_WEIGHT_STONE = 3;
+    const AMBIENT_EVENT_WEIGHT_FLOWER = 4;
+    const AMBIENT_EVENT_WEIGHT_PLANTED_ACORN_GROWTH = 3;
+    const AMBIENT_EVENT_WEIGHT_FOREST_SLIME = 1;
+    const AMBIENT_EVENT_WEIGHT_LOOSE_ACORN = 3;
+    const AMBIENT_EVENT_WEIGHT_TREE_GROWTH = 5;
     const canvas = document.getElementById('game');
     const ctx = canvas.getContext('2d');
     ctx.imageSmoothingEnabled = false;
@@ -300,11 +306,12 @@
 
     function renderAmbientPulseHud() {
       if (!ambientPulseHud) return;
+      ambientPulseHud.classList.toggle('visible', ambientPulseHudVisible);
+      if (!ambientPulseHudVisible) return;
       const rows = ambientPulseHistory.length
         ? ambientPulseHistory.map((entry) => `<div class="hud-debug-entry">${escapeHtml(entry)}</div>`).join('')
         : '<div class="hud-debug-entry">Waiting for first pulse…</div>';
       ambientPulseHud.innerHTML = `<div class="hud-debug-title">Ambient pulse history</div>${rows}`;
-      ambientPulseHud.classList.toggle('visible', ambientPulseHudVisible);
     }
 
     function recordAmbientPulse(message, now = performance.now()) {
@@ -313,7 +320,9 @@
       if (ambientPulseHistory.length > AMBIENT_PULSE_HISTORY_MAX) {
         ambientPulseHistory.length = AMBIENT_PULSE_HISTORY_MAX;
       }
-      renderAmbientPulseHud();
+      if (ambientPulseHudVisible) {
+        renderAmbientPulseHud();
+      }
     }
 
     function toggleAmbientPulseHud() {
@@ -409,7 +418,11 @@
       }
       if (!candidates.length) return false;
       const chosen = candidates[Math.floor(Math.random() * candidates.length)];
-      flowerState.set(chosen.key, { bornAt: now, animOffsetMs: Math.floor(Math.random() * FLOWER_FRAMES * FLOWER_FRAME_MS) });
+      flowerState.set(chosen.key, {
+        bornAt: now,
+        animOffsetMs: Math.floor(Math.random() * FLOWER_FRAMES * FLOWER_FRAME_MS),
+        variant: chooseFlowerVariant(),
+      });
       return true;
     }
 
@@ -635,6 +648,13 @@ setTurnLabel();
 
     function chooseStoneVariant() {
       return Math.random() < 0.5 ? 'a' : 'b';
+    }
+
+    function chooseFlowerVariant() {
+      const roll = Math.random();
+      if (roll < 1 / 3) return 'pink';
+      if (roll < 2 / 3) return 'orange';
+      return 'red';
     }
 
     function getRemovingObject(key, type = null) {
@@ -882,7 +902,9 @@ setTurnLabel();
       heroWanderer: new Image(),
       stone: new Image(),
       stone2: new Image(),
-      flower: new Image(),
+      flowerPink: new Image(),
+      flowerOrange: new Image(),
+      flowerRed: new Image(),
       acorn: new Image(),
       acornPlanted: new Image(),
 	  chest: new Image(),
@@ -909,7 +931,9 @@ setTurnLabel();
       heroWanderer: false,
       stone: false,
       stone2: false,
-      flower: false,
+      flowerPink: false,
+      flowerOrange: false,
+      flowerRed: false,
       acorn: false,
       acornPlanted: false,
 	  chest: false,
@@ -1003,7 +1027,9 @@ setTurnLabel();
     loadAsset('heroWanderer', './hero_person.png');
     loadAsset('stone', './objects/stone.png');
     loadAsset('stone2', './objects/stone2.png');
-    loadAsset('flower', './objects/flower.png');
+    loadAsset('flowerPink', './objects/flower_pink.png');
+    loadAsset('flowerOrange', './objects/flower_orange.png');
+    loadAsset('flowerRed', './objects/flower_red.png');
     loadAsset('acorn', './acorn.png');
     loadAsset('acornPlanted', './acorn_planted.png');
 	loadAsset('chest', './mimic_chest.png');	
@@ -1723,7 +1749,10 @@ setTurnLabel();
       const key = keyOf(x, y);
       const info = flowerState.get(key);
       if (!info) return false;
-      beginDestructibleRemoval('flower', key, now, { animOffsetMs: info.animOffsetMs || 0 });
+      beginDestructibleRemoval('flower', key, now, {
+        animOffsetMs: info.animOffsetMs || 0,
+        variant: info.variant || 'pink'
+      });
       flowerState.delete(key);
       clearDestructibleHp(key);
       if (player.selectedDestructibleKey === key) clearSelectedTree();
@@ -1794,11 +1823,21 @@ setTurnLabel();
       return Math.max(0, Math.min(1, 1 - ((now - (state.startedAt || 0)) / TREE_FADE_MS)));
     }
 
+    function getFlowerAssetForVariant(variant = 'pink') {
+      if (variant === 'orange' && loaded.flowerOrange) return assets.flowerOrange;
+      if (variant === 'red' && loaded.flowerRed) return assets.flowerRed;
+      if (loaded.flowerPink) return assets.flowerPink;
+      if (loaded.flowerOrange) return assets.flowerOrange;
+      if (loaded.flowerRed) return assets.flowerRed;
+      return null;
+    }
+
     function getFlowerRenderInfo(tileX, tileY, progress, key = keyOf(tileX, tileY), now = performance.now(), mode = 'normal') {
       const screenX = camera.x + tileX * TILE_SIZE;
       const screenY = camera.y + tileY * TILE_SIZE;
       const anim = getTreeAnimState(progress);
-      const flowerAsset = loaded.flower ? assets.flower : null;
+      const info = flowerState.get(key) || getRemovingObject(key, 'flower');
+      const flowerAsset = getFlowerAssetForVariant(info?.variant || 'pink');
       const baseW = flowerAsset ? (flowerAsset.width / FLOWER_FRAMES) : TILE_SIZE;
       const baseH = flowerAsset ? flowerAsset.height : TILE_SIZE;
       let alpha = anim.alpha;
@@ -1818,7 +1857,7 @@ setTurnLabel();
       const drawW = Math.max(1, Math.round(baseW * scale * scaleX));
       const drawH = Math.max(1, Math.round(baseH * scale * scaleY));
       const drawX = Math.floor(screenX + (TILE_SIZE - drawW) / 2);
-      const drawY = Math.floor(screenY + TILE_SIZE - drawH + yOffset + 4);
+      const drawY = Math.floor(screenY + TILE_SIZE - drawH + yOffset);
       return { flowerAsset, drawW, drawH, drawX, drawY, alpha };
     }
 
@@ -2185,20 +2224,18 @@ function drawCollectedAcornEffects(now = performance.now()) {
         recordAmbientPulse(`no event (roll ${pulseRoll.toFixed(2)} > ${TREE_AMBIENT_GROWTH_CHANCE.toFixed(2)})`, now);
         return false;
       }
-      if (biomeName === 'Barren') {
-        if (tryAmbientStoneSpawn(visibleBounds, now)) {
-          recordAmbientPulse('success: ambient stone spawn (+1)', now);
-          return true;
-        }
-        recordAmbientPulse('no spawn (barren; no eligible stone tiles)', now);
-        return false;
-      }
 
-      if (biomeName === 'Grassland') {
-        if (tryAmbientFlowerSpawn(visibleBounds, treeTiles, now)) {
-          recordAmbientPulse('success: ambient flower spawn (+1)', now);
-          return true;
-        }
+      if (biomeName === 'Barren') {
+        const barrenEvents = [
+          {
+            key: 'stone',
+            weight: AMBIENT_EVENT_WEIGHT_STONE,
+            run: () => tryAmbientStoneSpawn(visibleBounds, now),
+            success: 'success: ambient stone spawn (+1)',
+            failHint: 'no eligible stone tiles'
+          }
+        ];
+        return resolveAmbientPulseEvents(barrenEvents, now, 'barren');
       }
 
       if (biomeName !== 'Grassland' && biomeName !== 'Forest') {
@@ -2207,51 +2244,86 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
 
       const environmentNow = getEnvironmentNow(now);
+      let desiredTreeTiles = null;
+      const getDesiredTreeTiles = () => {
+        if (!desiredTreeTiles) {
+          desiredTreeTiles = computeDesiredTreeTiles(environmentNow, getActiveSimulationBounds(), biomeName);
+        }
+        return desiredTreeTiles;
+      };
+      const events = [];
 
-      if (tryAmbientPlantedAcornGrowth(environmentNow, now)) {
-        recordAmbientPulse('success: planted acorn grew into a tree', now);
-        return true;
+      if (biomeName === 'Grassland') {
+        events.push({
+          key: 'flower',
+          weight: AMBIENT_EVENT_WEIGHT_FLOWER,
+          run: () => tryAmbientFlowerSpawn(visibleBounds, treeTiles, now),
+          success: 'success: ambient flower spawn (+1)',
+          failHint: 'no eligible flower tiles'
+        });
       }
 
-      if (biomeName === 'Forest' && trySpawnForestSlime(visibleBounds, treeTiles, now)) {
-        recordAmbientPulse('success: forest slime spawned', now);
-        return true;
+      events.push({
+        key: 'planted-acorn-growth',
+        weight: AMBIENT_EVENT_WEIGHT_PLANTED_ACORN_GROWTH,
+        run: () => tryAmbientPlantedAcornGrowth(environmentNow, now),
+        success: 'success: planted acorn grew into a tree',
+        failHint: 'no planted acorns ready'
+      });
+
+      if (biomeName === 'Forest') {
+        events.push({
+          key: 'forest-slime',
+          weight: AMBIENT_EVENT_WEIGHT_FOREST_SLIME,
+          run: () => trySpawnForestSlime(visibleBounds, treeTiles, now),
+          success: 'success: forest slime spawned',
+          failHint: 'no eligible forest slime tiles'
+        });
       }
 
-      const tryDropFirst = Math.random() < LOOSE_ACORN_DROP_CHANCE;
-      if (tryDropFirst) {
-        if (tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds)) {
-          recordAmbientPulse('success: loose acorn dropped', now);
+      events.push({
+        key: 'loose-acorn',
+        weight: AMBIENT_EVENT_WEIGHT_LOOSE_ACORN,
+        run: () => tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds),
+        success: 'success: loose acorn dropped',
+        failHint: 'no eligible acorn drop'
+      });
+
+      events.push({
+        key: 'tree-growth',
+        weight: AMBIENT_EVENT_WEIGHT_TREE_GROWTH,
+        run: () => addAmbientTreesFromDesired(getDesiredTreeTiles(), environmentNow, visibleBounds, TREE_AMBIENT_GROWTH_MAX_ADDITIONS) > 0,
+        success: 'success: ambient tree growth (+1)',
+        failHint: 'no desired tree tiles'
+      });
+
+      return resolveAmbientPulseEvents(events, now, biomeName.toLowerCase());
+    }
+
+    function resolveAmbientPulseEvents(events, now = performance.now(), label = 'ambient') {
+      const remaining = events.filter((event) => event && event.weight > 0 && typeof event.run === 'function');
+      const failedKeys = [];
+      while (remaining.length) {
+        let totalWeight = 0;
+        for (const event of remaining) totalWeight += event.weight;
+        let roll = Math.random() * totalWeight;
+        let chosenIndex = 0;
+        for (let i = 0; i < remaining.length; i += 1) {
+          roll -= remaining[i].weight;
+          if (roll <= 0) {
+            chosenIndex = i;
+            break;
+          }
+        }
+        const chosen = remaining.splice(chosenIndex, 1)[0];
+        if (chosen.run()) {
+          recordAmbientPulse(`${chosen.success} [weighted:${chosen.key}]`, now);
           return true;
         }
+        failedKeys.push(chosen.failHint || chosen.key);
       }
-
-      const desired = computeDesiredTreeTiles(environmentNow, getActiveSimulationBounds(), biomeName);
-      const addedTrees = addAmbientTreesFromDesired(desired, environmentNow, visibleBounds, TREE_AMBIENT_GROWTH_MAX_ADDITIONS);
-      if (addedTrees > 0) {
-        recordAmbientPulse(`success: ambient tree growth (+${addedTrees})`, now);
-        return true;
-      }
-
-      if (!tryDropFirst) {
-        if (tryAmbientAcornDrop(environmentNow, treeTiles, visibleBounds)) {
-          recordAmbientPulse('success: loose acorn dropped', now);
-          return true;
-        }
-      }
-
-      const visibleLooseAcornCount = getVisibleLooseAcornCount(visibleBounds);
-      const eligibleAcornTrees = getEligibleLooseAcornDropTrees(treeTiles, visibleBounds).length;
-      const outcome = tryDropFirst ? 'drop-first' : 'trees-first';
-      let detail = 'no valid spawn result';
-      if (visibleLooseAcornCount >= LOOSE_ACORN_MAX_VISIBLE) {
-        detail = `acorn cap (${visibleLooseAcornCount}/${LOOSE_ACORN_MAX_VISIBLE})`;
-      } else if (!eligibleAcornTrees) {
-        detail = 'no eligible acorn trees';
-      } else if (!desired.size) {
-        detail = 'no desired tree tiles';
-      }
-      recordAmbientPulse(`no spawn (${outcome}; ${detail})`, now);
+      const detail = failedKeys.length ? failedKeys.join('; ') : 'no eligible weighted events';
+      recordAmbientPulse(`no spawn (${label}; ${detail})`, now);
       return false;
     }
 
@@ -3106,121 +3178,63 @@ function drawCollectedAcornEffects(now = performance.now()) {
     }
 
 
-    const VOID_PARTICLE_COUNT = 56;
+    const VOID_PARTICLE_COUNT = 18;
     const voidParticles = Array.from({ length: VOID_PARTICLE_COUNT }, (_, i) => ({
       seed: i + 1,
-      x: ((i * 53) % 100) / 100,
+      lane: i % 2,
       y: ((i * 37) % 100) / 100,
-      size: 2 + (i % 4),
-      speed: 0.22 + (i % 7) * 0.06,
-      drift: 14 + (i % 7) * 6,
-      alpha: 0.11 + (i % 5) * 0.028,
-      edgeBias: (i % 2 === 0) ? 1 : -1,
+      size: 2 + (i % 2),
+      speed: 0.16 + (i % 5) * 0.035,
+      drift: 8 + (i % 4) * 4,
+      alpha: 0.08 + (i % 4) * 0.02,
     }));
 
     function drawVoidBackground(now) {
       const time = now * 0.001;
-      const cx = canvas.width * 0.5;
-      const cy = canvas.height * 0.5;
+      const w = canvas.width;
+      const h = canvas.height;
+      const edgeW = Math.floor(w * 0.14);
+      const edgeH = Math.floor(h * 0.14);
 
       ctx.save();
       ctx.fillStyle = '#05030a';
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
+      ctx.fillRect(0, 0, w, h);
 
-      const glow = ctx.createRadialGradient(
-        cx,
-        canvas.height * 0.45,
-        0,
-        cx,
-        canvas.height * 0.45,
-        Math.max(canvas.width, canvas.height) * 0.82
-      );
-      glow.addColorStop(0, 'rgba(92, 54, 140, 0.34)');
-      glow.addColorStop(0.35, 'rgba(46, 25, 74, 0.22)');
-      glow.addColorStop(0.72, 'rgba(20, 12, 34, 0.12)');
-      glow.addColorStop(1, 'rgba(0, 0, 0, 0)');
-      ctx.fillStyle = glow;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
-
-      ctx.globalCompositeOperation = 'screen';
-      for (let i = 0; i < 5; i++) {
-        const hazeX = canvas.width * (0.12 + i * 0.19) + Math.sin(time * (0.11 + i * 0.025) + i * 1.9) * (40 + i * 10);
-        const hazeY = canvas.height * (0.16 + i * 0.17) + Math.cos(time * (0.09 + i * 0.02) + i * 2.4) * (28 + i * 9);
-        const hazeR = 150 + i * 42;
-        const haze = ctx.createRadialGradient(hazeX, hazeY, 0, hazeX, hazeY, hazeR);
-        haze.addColorStop(0, `rgba(${86 + i * 10}, ${42 + i * 5}, ${128 + i * 12}, 0.12)`);
-        haze.addColorStop(0.45, `rgba(${48 + i * 6}, ${22 + i * 4}, ${78 + i * 8}, 0.07)`);
-        haze.addColorStop(1, 'rgba(0, 0, 0, 0)');
-        ctx.fillStyle = haze;
-        ctx.beginPath();
-        ctx.arc(hazeX, hazeY, hazeR, 0, Math.PI * 2);
-        ctx.fill();
-      }
-
-      const edgeGlowLeft = ctx.createLinearGradient(0, 0, canvas.width * 0.26, 0);
-      edgeGlowLeft.addColorStop(0, 'rgba(110, 72, 160, 0.26)');
+      const edgeGlowLeft = ctx.createLinearGradient(0, 0, edgeW, 0);
+      edgeGlowLeft.addColorStop(0, 'rgba(92, 58, 138, 0.18)');
       edgeGlowLeft.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = edgeGlowLeft;
-      ctx.fillRect(0, 0, canvas.width * 0.26, canvas.height);
+      ctx.fillRect(0, 0, edgeW, h);
 
-      const edgeGlowRight = ctx.createLinearGradient(canvas.width, 0, canvas.width * 0.74, 0);
-      edgeGlowRight.addColorStop(0, 'rgba(110, 72, 160, 0.26)');
+      const edgeGlowRight = ctx.createLinearGradient(w, 0, w - edgeW, 0);
+      edgeGlowRight.addColorStop(0, 'rgba(92, 58, 138, 0.18)');
       edgeGlowRight.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = edgeGlowRight;
-      ctx.fillRect(canvas.width * 0.74, 0, canvas.width * 0.26, canvas.height);
+      ctx.fillRect(w - edgeW, 0, edgeW, h);
 
-      const edgeGlowTop = ctx.createLinearGradient(0, 0, 0, canvas.height * 0.22);
-      edgeGlowTop.addColorStop(0, 'rgba(88, 50, 132, 0.18)');
+      const edgeGlowTop = ctx.createLinearGradient(0, 0, 0, edgeH);
+      edgeGlowTop.addColorStop(0, 'rgba(74, 42, 114, 0.12)');
       edgeGlowTop.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = edgeGlowTop;
-      ctx.fillRect(0, 0, canvas.width, canvas.height * 0.22);
+      ctx.fillRect(0, 0, w, edgeH);
 
-      const edgeGlowBottom = ctx.createLinearGradient(0, canvas.height, 0, canvas.height * 0.76);
-      edgeGlowBottom.addColorStop(0, 'rgba(88, 50, 132, 0.2)');
+      const edgeGlowBottom = ctx.createLinearGradient(0, h, 0, h - edgeH);
+      edgeGlowBottom.addColorStop(0, 'rgba(74, 42, 114, 0.12)');
       edgeGlowBottom.addColorStop(1, 'rgba(0, 0, 0, 0)');
       ctx.fillStyle = edgeGlowBottom;
-      ctx.fillRect(0, canvas.height * 0.76, canvas.width, canvas.height * 0.24);
+      ctx.fillRect(0, h - edgeH, w, edgeH);
 
       for (const particle of voidParticles) {
-        const edgeAnchorX = particle.edgeBias > 0 ? canvas.width * 0.9 : canvas.width * 0.1;
-        const px = edgeAnchorX
-          + Math.sin(time * (0.55 + particle.speed * 0.4) + particle.seed * 1.7) * (22 + particle.drift)
-          + Math.cos(time * 0.17 + particle.seed) * 8;
-        const py = (particle.y * canvas.height + time * particle.speed * 18 + Math.sin(time * 0.52 + particle.seed * 2.1) * (18 + particle.drift * 0.55)) % (canvas.height + 32) - 16;
+        const anchorX = particle.lane === 0 ? Math.round(w * 0.08) : Math.round(w * 0.92);
+        const px = anchorX + Math.sin(time * (0.45 + particle.speed) + particle.seed * 1.3) * particle.drift;
+        const py = (particle.y * h + time * (10 + particle.seed * 0.4)) % (h + 24) - 12;
         ctx.fillStyle = `rgba(196, 176, 255, ${particle.alpha})`;
         ctx.fillRect(Math.round(px), Math.round(py), particle.size, particle.size);
       }
 
-      ctx.globalCompositeOperation = 'lighter';
-      for (let i = 0; i < 10; i++) {
-        const edge = i % 2 === 0 ? 0.08 : 0.92;
-        const streakX = canvas.width * edge + Math.sin(time * (0.7 + i * 0.06) + i * 0.9) * 16;
-        const streakY = (canvas.height * ((i * 0.11) % 1) + time * (8 + i)) % (canvas.height + 80) - 40;
-        const streakW = 2 + (i % 2);
-        const streakH = 24 + (i % 5) * 10;
-        const streak = ctx.createLinearGradient(streakX, streakY, streakX, streakY + streakH);
-        streak.addColorStop(0, 'rgba(255,255,255,0)');
-        streak.addColorStop(0.45, 'rgba(206,185,255,0.18)');
-        streak.addColorStop(1, 'rgba(255,255,255,0)');
-        ctx.fillStyle = streak;
-        ctx.fillRect(streakX, streakY, streakW, streakH);
-      }
+      ctx.fillStyle = 'rgba(10, 6, 16, 0.18)';
+      ctx.fillRect(Math.floor(w * 0.2), Math.floor(h * 0.18), Math.floor(w * 0.6), Math.floor(h * 0.64));
 
-      ctx.globalCompositeOperation = 'source-over';
-      const vignette = ctx.createRadialGradient(
-        cx,
-        cy,
-        Math.min(canvas.width, canvas.height) * 0.2,
-        cx,
-        cy,
-        Math.max(canvas.width, canvas.height) * 0.8
-      );
-      vignette.addColorStop(0, 'rgba(0, 0, 0, 0)');
-      vignette.addColorStop(0.62, 'rgba(0, 0, 0, 0.22)');
-      vignette.addColorStop(0.84, 'rgba(14, 7, 22, 0.42)');
-      vignette.addColorStop(1, 'rgba(0, 0, 0, 0.72)');
-      ctx.fillStyle = vignette;
-      ctx.fillRect(0, 0, canvas.width, canvas.height);
       ctx.restore();
     }
 
