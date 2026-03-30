@@ -268,6 +268,7 @@
     const GRASSLAND_FLOWER_MAX_COUNT = 18;
     const AMBIENT_EVENT_WEIGHT_STONE = 3;
     const AMBIENT_EVENT_WEIGHT_FLOWER = 4;
+    const AMBIENT_EVENT_WEIGHT_SMALL_FLOWER = 4;
     const AMBIENT_EVENT_WEIGHT_PLANTED_ACORN_GROWTH = 3;
     const AMBIENT_EVENT_WEIGHT_FOREST_SLIME = 1;
     const AMBIENT_EVENT_WEIGHT_LOOSE_ACORN = 3;
@@ -295,9 +296,21 @@
         .replace(/'/g, '&#39;');
     }
     let worldTurn = 0;
+    let mountedTurnCounter = 1;
     function setTurnLabel() {
       if (!turnLabel) return;
-      turnLabel.textContent = `Turn: ${worldTurn}`;
+      turnLabel.style.display = 'none';
+      if (typeof player === 'undefined') return;
+      if (player.form !== 'chest') return;
+      turnLabel.textContent = `Turn: ${mountedTurnCounter}`;
+    }
+    function resetMountedTurnCounter() {
+      mountedTurnCounter = 1;
+      setTurnLabel();
+    }
+    function incrementMountedTurnCounter() {
+      mountedTurnCounter += 1;
+      setTurnLabel();
     }
     function updateAcornCountLabel() {
       if (!acornCountLabel) return;
@@ -389,7 +402,7 @@
     function canFlowerSpawnAt(tileX, tileY, treeTiles = getActiveTreeTiles(performance.now()), now = performance.now()) {
       const key = keyOf(tileX, tileY);
       if (tileAt(tileX, tileY) !== 'grass') return false;
-      if (flowerState.has(key)) return false;
+      if (flowerState.has(key) || isDestructibleRemoving(key, 'flower')) return false;
       if (treeState.has(key) || isDestructibleRemoving(key, 'tree')) return false;
       if (stoneState.has(key) || isDestructibleRemoving(key, 'stone')) return false;
       if (plantedAcorns.has(key) || looseAcorns.has(key)) return false;
@@ -407,7 +420,7 @@
       return count;
     }
 
-    function tryAmbientFlowerSpawn(bounds = getVisibleBounds(), treeTiles = getActiveTreeTiles(performance.now()), now = performance.now()) {
+    function tryAmbientFlowerSpawn(kind = 'regular', bounds = getVisibleBounds(), treeTiles = getActiveTreeTiles(performance.now()), now = performance.now()) {
       if (getVisibleFlowerCount(bounds) >= GRASSLAND_FLOWER_MAX_COUNT) return false;
       const candidates = [];
       for (let y = bounds.minY; y <= bounds.maxY; y++) {
@@ -421,7 +434,7 @@
       flowerState.set(chosen.key, {
         bornAt: now,
         animOffsetMs: Math.floor(Math.random() * FLOWER_FRAMES * FLOWER_FRAME_MS),
-        variant: chooseFlowerVariant(),
+        variant: chooseFlowerVariant(kind),
       });
       return true;
     }
@@ -495,12 +508,111 @@
 
       return grewAny;
     }
-setTurnLabel();
     renderAmbientPulseHud();
     const itemBar = document.getElementById('itemBar');
     const itemButtons = [...document.querySelectorAll('.item-bar .item-slot[data-equip]')];
     const mobileControlsFrame = document.getElementById('mobileControlsFrame');
     const mobileInputState = { up: false, down: false, left: false, right: false };
+
+    const bgMusic = new Audio('./forest_lullaby.mp3');
+    bgMusic.loop = true;
+    bgMusic.volume = 0.35;
+    bgMusic.preload = 'auto';
+    let bgMusicStarted = false;
+
+    const sfxDefs = {
+      step: { src: './sfx_step.wav', volume: 0.22 },
+      chestStep: { src: './sfx_chest_step.wav', volume: 0.28 },
+      place: { src: './sfx_place.mp3', volume: 0.28 },
+      pickupAcorn: { src: './sfx_pickup_acorn.wav', volume: 0.32 },
+      plantAcorn: { src: './sfx_plant_acorn.wav', volume: 0.26 },
+      treeChop: { src: './sfx_tree_chop.wav', volume: 0.34 },
+      stoneBreak: { src: './sfx_stone_break.wav', volume: 0.34 },
+      flowerPick: { src: './sfx_flower_pick.wav', volume: 0.24 },
+      mountChest: { src: './sfx_mount.wav', volume: 0.34 },
+      dismountChest: { src: './sfx_dismount.wav', volume: 0.34 },
+      bite: { src: './sfx_bite.wav', volume: 0.34 },
+      alert: { src: './sfx_alert.wav', volume: 0.30 },
+      menuMove: { src: './sfx_menu_move.wav', volume: 0.18 },
+      menuConfirm: { src: './sfx_menu_confirm.wav', volume: 0.22 },
+    };
+    const sfxAssets = {};
+    let lastShadowStepSfxAt = 0;
+    let lastChestStepSfxAt = 0;
+
+    function primeAudioAsset(audio) {
+      if (!audio) return;
+      try {
+        audio.load();
+      } catch (_) {}
+    }
+
+    function initAudioAssets() {
+      primeAudioAsset(bgMusic);
+      for (const [name, def] of Object.entries(sfxDefs)) {
+        const audio = new Audio(def.src);
+        audio.preload = 'auto';
+        audio.volume = def.volume;
+        sfxAssets[name] = audio;
+        primeAudioAsset(audio);
+      }
+    }
+
+    function tryStartBackgroundMusic() {
+      if (bgMusicStarted) return;
+      const playPromise = bgMusic.play();
+      if (playPromise && typeof playPromise.then === 'function') {
+        playPromise.then(() => {
+          bgMusicStarted = true;
+        }).catch(() => {
+          bgMusicStarted = false;
+        });
+      } else {
+        bgMusicStarted = true;
+      }
+    }
+
+    function pauseBackgroundMusic() {
+      bgMusic.pause();
+      bgMusicStarted = false;
+    }
+
+    function playSfx(name, options = {}) {
+      const base = sfxAssets[name];
+      if (!base) return false;
+      tryStartBackgroundMusic();
+      try {
+        const audio = base.cloneNode();
+        const volume = options.volume == null ? (sfxDefs[name]?.volume ?? 1) : options.volume;
+        const baseRate = options.playbackRate == null ? 1 : options.playbackRate;
+        const pitchJitter = Math.max(0, options.pitchJitter ?? 0);
+        const jitteredRate = baseRate + ((Math.random() * 2 - 1) * pitchJitter);
+        audio.volume = Math.max(0, Math.min(1, volume));
+        audio.playbackRate = Math.max(0.5, Math.min(2.0, jitteredRate));
+        if (options.currentTime != null) audio.currentTime = options.currentTime;
+        const playPromise = audio.play();
+        if (playPromise && typeof playPromise.catch === 'function') {
+          playPromise.catch(() => {});
+        }
+        return true;
+      } catch (_) {
+        return false;
+      }
+    }
+
+    function maybePlayShadowStepSfx(now = performance.now()) {
+      if (now - lastShadowStepSfxAt < 220) return false;
+      lastShadowStepSfxAt = now;
+      return playSfx('step');
+    }
+
+    function maybePlayChestStepSfx(now = performance.now()) {
+      if (now - lastChestStepSfxAt < 280) return false;
+      lastChestStepSfxAt = now;
+      return playSfx('chestStep');
+    }
+
+    initAudioAssets();
 
     function isMobileViewportActive() {
       return window.matchMedia('(hover: none), (pointer: coarse), (max-width: 900px)').matches;
@@ -650,7 +762,8 @@ setTurnLabel();
       return Math.random() < 0.5 ? 'a' : 'b';
     }
 
-    function chooseFlowerVariant() {
+    function chooseFlowerVariant(kind = 'regular') {
+      if (kind === 'small') return 'smallPink';
       const roll = Math.random();
       if (roll < 1 / 3) return 'pink';
       if (roll < 2 / 3) return 'orange';
@@ -905,6 +1018,7 @@ setTurnLabel();
       flowerPink: new Image(),
       flowerOrange: new Image(),
       flowerRed: new Image(),
+      flowerSmallPink: new Image(),
       acorn: new Image(),
       acornPlanted: new Image(),
 	  chest: new Image(),
@@ -934,6 +1048,7 @@ setTurnLabel();
       flowerPink: false,
       flowerOrange: false,
       flowerRed: false,
+      flowerSmallPink: false,
       acorn: false,
       acornPlanted: false,
 	  chest: false,
@@ -1030,6 +1145,7 @@ setTurnLabel();
     loadAsset('flowerPink', './objects/flower_pink.png');
     loadAsset('flowerOrange', './objects/flower_orange.png');
     loadAsset('flowerRed', './objects/flower_red.png');
+    loadAsset('flowerSmallPink', './objects/flower_small_pink.png');
     loadAsset('acorn', './acorn.png');
     loadAsset('acornPlanted', './acorn_planted.png');
 	loadAsset('chest', './mimic_chest.png');	
@@ -1232,6 +1348,7 @@ setTurnLabel();
     function chopTreeAt(x, y, now = performance.now()) {
       const key = keyOf(x, y);
       beginDestructibleRemoval('tree', key, now, { variant: treeState.get(key)?.variant || chooseTreeVariant() });
+      playSfx('treeChop');
       treeState.delete(key);
       if (pausedTreeTiles) pausedTreeTiles.delete(key);
       clearDestructibleHp(key);
@@ -1264,6 +1381,7 @@ setTurnLabel();
       const target = getHeldTileTarget();
       if (!target) return false;
       setTile(target.x, target.y, player.heldTile, true, performance.now());
+      playSfx('place', { pitchJitter: 0.6 });
       render();
       return true;
     }
@@ -1291,6 +1409,7 @@ setTurnLabel();
       if (plantedAcorns.has(key)) return false;
       plantedAcorns.set(key, { plantedAt: now, growthPulses: 0 });
       player.acornCount = Math.max(0, (player.acornCount || 0) - 1);
+      playSfx('plantAcorn');
       if (player.acornCount <= 0 && player.heldTile === 'acorn') player.heldTile = null;
       syncItemBarUi();
       render(now);
@@ -1390,6 +1509,7 @@ setTurnLabel();
         baseH: 32
       });
       player.acornCount = (player.acornCount || 0) + 1;
+      playSfx('pickupAcorn');
       syncItemBarUi();
       render(now);
       return true;
@@ -1730,6 +1850,7 @@ setTurnLabel();
       const info = stoneState.get(key);
       if (!info) return false;
       beginDestructibleRemoval('stone', key, now, { variant: info.variant || 'a' });
+      playSfx('stoneBreak');
       stoneState.delete(key);
       clearDestructibleHp(key);
       if (player.selectedDestructibleKey === key) clearSelectedTree();
@@ -1749,6 +1870,7 @@ setTurnLabel();
       const key = keyOf(x, y);
       const info = flowerState.get(key);
       if (!info) return false;
+      playSfx('flowerPick');
       beginDestructibleRemoval('flower', key, now, {
         animOffsetMs: info.animOffsetMs || 0,
         variant: info.variant || 'pink'
@@ -1824,11 +1946,13 @@ setTurnLabel();
     }
 
     function getFlowerAssetForVariant(variant = 'pink') {
+      if (variant === 'smallPink' && loaded.flowerSmallPink) return assets.flowerSmallPink;
       if (variant === 'orange' && loaded.flowerOrange) return assets.flowerOrange;
       if (variant === 'red' && loaded.flowerRed) return assets.flowerRed;
       if (loaded.flowerPink) return assets.flowerPink;
       if (loaded.flowerOrange) return assets.flowerOrange;
       if (loaded.flowerRed) return assets.flowerRed;
+      if (loaded.flowerSmallPink) return assets.flowerSmallPink;
       return null;
     }
 
@@ -2257,9 +2381,16 @@ function drawCollectedAcornEffects(now = performance.now()) {
         events.push({
           key: 'flower',
           weight: AMBIENT_EVENT_WEIGHT_FLOWER,
-          run: () => tryAmbientFlowerSpawn(visibleBounds, treeTiles, now),
+          run: () => tryAmbientFlowerSpawn('regular', visibleBounds, treeTiles, now),
           success: 'success: ambient flower spawn (+1)',
           failHint: 'no eligible flower tiles'
+        });
+        events.push({
+          key: 'small-flower',
+          weight: AMBIENT_EVENT_WEIGHT_SMALL_FLOWER,
+          run: () => tryAmbientFlowerSpawn('small', visibleBounds, treeTiles, now),
+          success: 'success: ambient small flower spawn (+1)',
+          failHint: 'no eligible small flower tiles'
         });
       }
 
@@ -2584,6 +2715,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
         const info = getStoneRenderInfo(target.x, target.y, getStoneAnimationProgress(target.key, now), target.key, now, 'normal');
         return { baseScreenX: info.screenX, baseScreenY: info.screenY };
       }
+      if (target.type === 'flower') {
+        const info = getFlowerRenderInfo(target.x, target.y, getFlowerAnimationProgress(target.key, now), target.key, now, 'normal');
+        return { baseScreenX: info.drawX, baseScreenY: info.drawY };
+      }
       return null;
     }
 
@@ -2775,6 +2910,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
 	  chestBiteAnim.y = y;
 	  chestBiteAnim.impactApplied = false;
 	  chestBiteAnim.pendingEffect = pendingEffect;
+	  playSfx('bite');
 	}
 
 	function resolveChestBiteImpact(now = performance.now()) {
@@ -3155,6 +3291,28 @@ function drawCollectedAcornEffects(now = performance.now()) {
       return null;
     }
 
+    function drawMountedTurnCounter() {
+      if (!player || player.form !== 'chest') return;
+      const text = `Turn: ${mountedTurnCounter}`;
+      const x = 12;
+      const y = 12;
+      ctx.save();
+      ctx.font = 'bold 14px monospace';
+      ctx.textAlign = 'left';
+      ctx.textBaseline = 'top';
+      const textWidth = ctx.measureText(text).width;
+      const boxW = Math.ceil(textWidth) + 20;
+      const boxH = 28;
+      ctx.fillStyle = 'rgba(0, 0, 0, 0.72)';
+      ctx.fillRect(x, y, boxW, boxH);
+      ctx.strokeStyle = 'rgba(255,255,255,0.22)';
+      ctx.lineWidth = 1;
+      ctx.strokeRect(x + 0.5, y + 0.5, boxW - 1, boxH - 1);
+      ctx.fillStyle = '#f4f1d0';
+      ctx.fillText(text, x + 10, y + 7);
+      ctx.restore();
+    }
+
     function drawBiomeLabel(name) {
       const label = name || 'Abyss';
 
@@ -3318,6 +3476,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (!monster) return false;
 
       monster.alertUntil = now + GREEN_SLIME_ALERT_MS;
+      playSfx('alert');
       render(now);
       return true;
     }
@@ -3428,6 +3587,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (player.form !== 'chest') return;
       mountedMenu.open = true;
       mountedMenu.mode = 'menu';
+      playSfx('menuConfirm');
       mountedMenu.ambushMenuIndex = 0;
       clampMountedMenuIndex();
     }
@@ -3455,6 +3615,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         heroEngagement.pendingPlayerStep = null;
         return true;
       }
+      incrementMountedTurnCounter();
       incrementWorldTurn();
       trySpawnMountedHeroEncounter(now);
       return true;
@@ -3600,6 +3761,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
 
     function handControlToPlayerDuringHeroEncounter() {
       if (!isHeroEngagementActive()) return;
+      incrementMountedTurnCounter();
       heroEngagement.turn = 'player';
       heroEngagement.mode = 'idle';
       heroEngagement.menuOpen = false;
@@ -3663,6 +3825,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         next = (next + delta + options.length) % options.length;
         if (!options[next].disabled) break;
       }
+      if (next !== mountedMenu.menuIndex) playSfx('menuMove');
       mountedMenu.menuIndex = next;
     }
 
@@ -3692,6 +3855,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
           return endMountedPlayerTurn(now);
         case 'Dismount':
           heroEngagement.ambushOpening = false;
+          if (isHeroEngagementActive()) {
+            showEncounterBanner(`It's not currently safe to dismount!`, now);
+            return true;
+          }
           closeMountedActionMenu();
           toggleShadowForm();
           return true;
@@ -3722,6 +3889,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (!isHeroEngagementActive()) return false;
       const hero = heroEngagement.hero;
       if (!hero || !isHeroAdjacentToCurrentChest(hero) || !isChestHidden()) return false;
+      incrementMountedTurnCounter();
       clearChestMoveTarget();
       hero.turnTargetX = null;
       hero.turnTargetY = null;
@@ -3762,6 +3930,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         next = (next + delta + options.length) % options.length;
         if (!options[next].disabled) break;
       }
+      if (next !== getCurrentActionMenuIndex()) playSfx('menuMove');
       setCurrentActionMenuIndex(next);
     }
 
@@ -3819,6 +3988,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (!isHeroActionTargetTile(nextX, nextY, mountedMenu.ambushAttack)) return false;
       mountedMenu.targetCursorX = nextX;
       mountedMenu.targetCursorY = nextY;
+      playSfx('menuMove');
       return true;
     }
 
@@ -3832,6 +4002,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const nextIndex = (startIndex + direction + validTiles.length) % validTiles.length;
       mountedMenu.targetCursorX = validTiles[nextIndex].x;
       mountedMenu.targetCursorY = validTiles[nextIndex].y;
+      playSfx('menuMove');
       return true;
     }
 
@@ -3875,6 +4046,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (mountedMenu.mode !== 'target_select') return false;
       mountedMenu.ambushTargetX = mountedMenu.targetCursorX;
       mountedMenu.ambushTargetY = mountedMenu.targetCursorY;
+      playSfx('menuConfirm');
       return resolveMountedBiteTarget(now);
     }
 
@@ -3905,7 +4077,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
         if (isHeroEngagementActive()) {
           heroEngagement.turn = 'hero';
           heroEngagement.mode = 'banner';
-          showEncounterBanner(`${hero?.heroName || 'Wanderer'} was defeated!`, now, 'finish_ambush');
+          showEncounterBanner('', now, 'finish_ambush');
           return true;
         }
         if (hero) {
@@ -4011,7 +4183,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       if (!hero) return false;
       if (heroEngagement.ambushOutcome === 'kill') {
         heroEngagement.ambushOpening = false;
-        showEncounterBanner(`${hero.heroName} was defeated!`, now, 'finish_ambush');
+        showEncounterBanner('', now, 'finish_ambush');
       } else if (heroEngagement.ambushOutcome === 'survive') {
         heroEngagement.ambushOpening = false;
         hero.mode = 'flee';
@@ -4571,22 +4743,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
     }
 
     function drawHeroVisionHighlights() {
-      if (!isHeroEngagementActive()) return;
-      const hero = heroEngagement.hero;
-      if (!hero || hero.type !== 'heroWanderer' || (hero.mode !== 'explore' && hero.mode !== 'approach')) return;
-      const visionTiles = getHeroVisionTiles(hero);
-      if (!visionTiles.length) return;
-      ctx.save();
-      for (const tile of visionTiles) {
-        const screenX = Math.floor(camera.x + tile.x * TILE_SIZE);
-        const screenY = Math.floor(camera.y + tile.y * TILE_SIZE);
-        ctx.fillStyle = 'rgba(255, 64, 64, 0.16)';
-        ctx.fillRect(screenX, screenY, TILE_SIZE, TILE_SIZE);
-        ctx.strokeStyle = 'rgba(255, 90, 90, 0.72)';
-        ctx.lineWidth = 2;
-        ctx.strokeRect(screenX + 1, screenY + 1, TILE_SIZE - 2, TILE_SIZE - 2);
-      }
-      ctx.restore();
+      return;
     }
 
     function drawHeroEngagementGrid(bounds) {
@@ -5665,6 +5822,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       }
       drawSelectedTreePrompt(environmentNow);
       drawBiomeLabel(biomeName);
+      drawMountedTurnCounter();
       drawEncounterBanner(now);
       drawTurnHint();
       drawHeroActionMenu();
@@ -5749,6 +5907,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
           player.y = player.chestMoveTargetY;
           const toTile = { x: Math.floor(player.x), y: Math.floor(player.y) };
           clearChestMoveTarget();
+          maybePlayChestStepSfx(now);
           if (isHeroEngagementActive() && heroEngagement.turn === 'player') {
             if (maybeTriggerHeroVisionReactionOnPlayerMove(fromTile, toTile, now)) {
               // Hero saw the chest move and is fleeing.
@@ -5756,12 +5915,14 @@ function drawCollectedAcornEffects(now = performance.now()) {
               endMountedPlayerTurn(now);
             }
           } else if (!isHeroEngagementActive()) {
+            incrementMountedTurnCounter();
             incrementWorldTurn();
             trySpawnMountedHeroEncounter(now);
           }
         } else {
           player.x += (dx / dist) * step;
           player.y += (dy / dist) * step;
+          maybePlayChestStepSfx(performance.now());
         }
 
         player.moving = true;
@@ -5878,11 +6039,16 @@ function drawCollectedAcornEffects(now = performance.now()) {
       const step = SHADOW_SPEED * dt;
       const nextX = player.x + moveX * step;
       const nextY = player.y + moveY * step;
+      const prevX = player.x;
+      const prevY = player.y;
       if (isWalkableBody(nextX, player.y)) {
         player.x = nextX;
       }
       if (isWalkableBody(player.x, nextY)) {
         player.y = nextY;
+      }
+      if (player.x !== prevX || player.y !== prevY) {
+        maybePlayShadowStepSfx(performance.now());
       }
       collectLooseAcornUnderPlayer(performance.now());
     }
@@ -5902,6 +6068,8 @@ function drawCollectedAcornEffects(now = performance.now()) {
       closeMountedActionMenu();
       const target = getChestInteractTarget();
       if (!target) return;
+      resetMountedTurnCounter();
+      playSfx('mountChest');
       const startShadowX = player.x;
       const startShadowY = player.y;
       clearRecallCharge();
@@ -5909,6 +6077,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
       pauseEnvironment();
       chestPossessTransition.active = false;
       player.form = 'chest';
+      setTurnLabel();
       player.hiddenInChest = false;
       player.x = chestState.x;
       player.y = chestState.y;
@@ -5945,8 +6114,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
     function recallToChest() {
       if (player.form !== 'shadow' || !chestState.placed) return false;
       pauseEnvironment();
+      resetMountedTurnCounter();
       chestPossessTransition.active = false;
       player.form = 'chest';
+      setTurnLabel();
       player.hiddenInChest = false;
       player.x = chestState.x;
       player.y = chestState.y;
@@ -6012,8 +6183,10 @@ function drawCollectedAcornEffects(now = performance.now()) {
     chestReleaseTransition.chestX = chestState.x;
     chestReleaseTransition.chestY = chestState.y;
 
+    playSfx('dismountChest');
     resumeEnvironment(performance.now());
     syncItemBarUi();
+    setTurnLabel();
     render();
     return;
   }
@@ -6187,6 +6360,7 @@ function drawCollectedAcornEffects(now = performance.now()) {
     });
 
     window.addEventListener('keydown', (e) => {
+      tryStartBackgroundMusic();
       const key = e.key.toLowerCase();
       const movementKeys = ['arrowup', 'arrowdown', 'arrowleft', 'arrowright', 'w', 'a', 's', 'd'];
       const uiKeys = ['f', 'escape', '1', '2', '3', '4', '5', ' ', 'f9'];
@@ -6342,7 +6516,16 @@ function drawCollectedAcornEffects(now = performance.now()) {
       setMovementKey(key, false);
     });
 
+    window.addEventListener('pointerdown', tryStartBackgroundMusic, { passive: true });
+    window.addEventListener('touchstart', tryStartBackgroundMusic, { passive: true });
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) {
+        pauseBackgroundMusic();
+      }
+    });
+
     window.addEventListener('blur', () => {
+      pauseBackgroundMusic();
       input.up = false;
       input.down = false;
       input.left = false;
