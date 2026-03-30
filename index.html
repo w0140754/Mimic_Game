@@ -517,44 +517,40 @@
     const bgMusic = new Audio('./forest_lullaby.mp3');
     bgMusic.loop = true;
     bgMusic.volume = 0.35;
-    bgMusic.preload = 'auto';
+    bgMusic.preload = 'none';
     let bgMusicStarted = false;
 
     const sfxDefs = {
-      step: { src: './sfx_step.wav', volume: 0.22 },
-      chestStep: { src: './sfx_chest_step.wav', volume: 0.28 },
-      place: { src: './sfx_place.mp3', volume: 0.28 },
-      pickupAcorn: { src: './sfx_pickup_acorn.wav', volume: 0.32 },
-      plantAcorn: { src: './sfx_plant_acorn.wav', volume: 0.26 },
-      treeChop: { src: './sfx_tree_chop.wav', volume: 0.34 },
-      stoneBreak: { src: './sfx_stone_break.wav', volume: 0.34 },
-      flowerPick: { src: './sfx_flower_pick.wav', volume: 0.24 },
-      mountChest: { src: './sfx_mount.wav', volume: 0.34 },
-      dismountChest: { src: './sfx_dismount.wav', volume: 0.34 },
-      bite: { src: './sfx_bite.wav', volume: 0.34 },
-      alert: { src: './sfx_alert.wav', volume: 0.30 },
-      menuMove: { src: './sfx_menu_move.wav', volume: 0.18 },
-      menuConfirm: { src: './sfx_menu_confirm.wav', volume: 0.22 },
+      step: { src: './sfx_step.wav', volume: 0.22, poolSize: 2 },
+      chestStep: { src: './sfx_chest_step.wav', volume: 0.28, poolSize: 2 },
+      place: { src: './sfx_place.mp3', volume: 0.28, poolSize: 3 },
+      pickupAcorn: { src: './sfx_pickup_acorn.wav', volume: 0.32, poolSize: 2 },
+      plantAcorn: { src: './sfx_plant_acorn.wav', volume: 0.26, poolSize: 2 },
+      treeChop: { src: './sfx_tree_chop.wav', volume: 0.34, poolSize: 2 },
+      stoneBreak: { src: './sfx_stone_break.wav', volume: 0.34, poolSize: 2 },
+      flowerPick: { src: './sfx_flower_pick.wav', volume: 0.24, poolSize: 2 },
+      mountChest: { src: './sfx_mount.wav', volume: 0.34, poolSize: 1 },
+      dismountChest: { src: './sfx_dismount.wav', volume: 0.34, poolSize: 1 },
+      bite: { src: './sfx_bite.wav', volume: 0.34, poolSize: 2 },
+      alert: { src: './sfx_alert.wav', volume: 0.30, poolSize: 1 },
+      menuMove: { src: './sfx_menu_move.wav', volume: 0.18, poolSize: 1 },
+      menuConfirm: { src: './sfx_menu_confirm.wav', volume: 0.22, poolSize: 1 },
     };
     const sfxAssets = {};
     let lastShadowStepSfxAt = 0;
     let lastChestStepSfxAt = 0;
 
-    function primeAudioAsset(audio) {
-      if (!audio) return;
-      try {
-        audio.load();
-      } catch (_) {}
-    }
-
     function initAudioAssets() {
-      primeAudioAsset(bgMusic);
       for (const [name, def] of Object.entries(sfxDefs)) {
-        const audio = new Audio(def.src);
-        audio.preload = 'auto';
-        audio.volume = def.volume;
-        sfxAssets[name] = audio;
-        primeAudioAsset(audio);
+        const poolSize = Math.max(1, def.poolSize || 1);
+        const pool = [];
+        for (let i = 0; i < poolSize; i++) {
+          const audio = new Audio(def.src);
+          audio.preload = 'none';
+          audio.volume = def.volume;
+          pool.push(audio);
+        }
+        sfxAssets[name] = { pool, nextIndex: 0 };
       }
     }
 
@@ -578,18 +574,23 @@
     }
 
     function playSfx(name, options = {}) {
-      const base = sfxAssets[name];
-      if (!base) return false;
-      tryStartBackgroundMusic();
+      const entry = sfxAssets[name];
+      if (!entry) return false;
+      const pool = entry.pool;
+      let audio = pool.find((a) => a.paused || a.ended);
+      if (!audio) {
+        audio = pool[entry.nextIndex];
+        entry.nextIndex = (entry.nextIndex + 1) % pool.length;
+      }
+      const volume = options.volume == null ? (sfxDefs[name]?.volume ?? 1) : options.volume;
+      const baseRate = options.playbackRate == null ? 1 : options.playbackRate;
+      const pitchJitter = Math.max(0, options.pitchJitter ?? 0);
+      const jitteredRate = baseRate + ((Math.random() * 2 - 1) * pitchJitter);
       try {
-        const audio = base.cloneNode();
-        const volume = options.volume == null ? (sfxDefs[name]?.volume ?? 1) : options.volume;
-        const baseRate = options.playbackRate == null ? 1 : options.playbackRate;
-        const pitchJitter = Math.max(0, options.pitchJitter ?? 0);
-        const jitteredRate = baseRate + ((Math.random() * 2 - 1) * pitchJitter);
+        audio.pause();
+        audio.currentTime = options.currentTime != null ? options.currentTime : 0;
         audio.volume = Math.max(0, Math.min(1, volume));
-        audio.playbackRate = Math.max(0.5, Math.min(2.0, jitteredRate));
-        if (options.currentTime != null) audio.currentTime = options.currentTime;
+        audio.playbackRate = Math.max(0.7, Math.min(1.3, jitteredRate));
         const playPromise = audio.play();
         if (playPromise && typeof playPromise.catch === 'function') {
           playPromise.catch(() => {});
@@ -1381,7 +1382,7 @@
       const target = getHeldTileTarget();
       if (!target) return false;
       setTile(target.x, target.y, player.heldTile, true, performance.now());
-      playSfx('place', { pitchJitter: 0.6 });
+      playSfx('place', { pitchJitter: 0.07 });
       render();
       return true;
     }
